@@ -6,8 +6,6 @@ export default function SelPanel() {
   const selection = useEditor((s) => s.selection)
   const clipboard = useEditor((s) => s.clipboard)
   const colorIndex = useEditor((s) => s.colorIndex)
-  const bench = useEditor((s) => s.bench)
-  const benchRunning = useEditor((s) => s.benchRunning)
   const grid = useEditor((s) => s.grid)
   const boards = useEditor((s) => s.geom.boards.length)
   const undoBytes = useEditor((s) => s.undoBytes)
@@ -71,21 +69,6 @@ export default function SelPanel() {
         <p className="text-[11px] leading-relaxed text-neutral-500">
           镜像和旋转作用在选区上（没选区就是整图）。旋转要求正方形区域。平移永远作用于整图。
         </p>
-      </Panel>
-
-      <Panel title="性能自测">
-        <Btn onClick={a.runBench} disabled={benchRunning}>
-          {benchRunning ? t('editor').benchRunning : t('editor').bench}
-        </Btn>
-        {bench?.map((phase) => (
-          <div key={phase.label} className="rounded bg-neutral-50 p-2 text-[11px]">
-            <div className="text-neutral-700">{phase.label}</div>
-            <div className="tabular-nums text-neutral-500">
-              {phase.visibleCells.toLocaleString()} 格/屏 · 重绘 {phase.avgDrawMs}ms（最差{' '}
-              {phase.worstDrawMs}ms）· ≈{phase.fps} fps
-            </div>
-          </div>
-        ))}
       </Panel>
 
       <Panel title="统计">

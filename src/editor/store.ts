@@ -8,7 +8,7 @@ import {
   type BoardLayout,
   WARN_CELLS,
 } from '../domain/board'
-import { EMPTY, type CellGrid, createGrid, inBounds, usedCells } from '../domain/grid'
+import { EMPTY, type CellGrid, createGrid, inBounds } from '../domain/grid'
 import { type Palette } from '../domain/palette'
 import { allowedMask, defaultColorIndex, getPalette, paletteRgb } from '../data/palettes'
 import { createMatcher } from '../conversion/match'
@@ -28,7 +28,6 @@ import {
 } from './selection'
 import { fillSelection } from './selection'
 import { floodFill, paint, pickColor, type WriteSink } from './tools'
-import { type BenchPhase, runPanBench } from './bench'
 import { DEFAULT_SETTINGS, type ConversionSettings } from '../conversion/convert'
 import {
   createProject,
@@ -45,7 +44,6 @@ import { resolveStrategy, STRATEGIES } from '../conversion/strategies'
 import { decodeImageFile } from '../conversion/decode'
 import type { Rgb } from '../conversion/colorDistance'
 import type { SourceImage } from '../conversion/types'
-import { getRenderer } from '../render/rendererHandle'
 
 export type ToolId = 'select' | 'pencil' | 'eraser' | 'picker' | 'bucket' | 'rect'
 
@@ -89,9 +87,6 @@ export interface EditorState {
   notice: string | null
   /** 进行中的笔画：格索引 → 色板索引。只画在覆盖层，松手才提交 */
   pending: Map<number, number> | null
-  bench: BenchPhase[] | null
-  benchRunning: boolean
-
   /** 导入的源图（解码后、已限制尺寸） */
   sourceImage: SourceImage | null
   sourceName: string | null
@@ -162,7 +157,6 @@ export interface EditorState {
   mirror(axis: 'h' | 'v'): void
   rotate(dir: 1 | -1): void
   translate(dc: number, dr: number): void
-  runBench(): Promise<void>
   importImage(file: File): Promise<void>
   /** 刷新/重开工程后把缓存的源图捡回来（只是缩略图大小，不是原图） */
   restoreSourceImage(): Promise<boolean>
@@ -251,8 +245,6 @@ export const useEditor = create<EditorState>((set, get) => ({
   undoBytes: 0,
   notice: null,
   pending: null,
-  bench: null,
-  benchRunning: false,
   sourceImage: null,
   sourceName: null,
   sourceCached: false,
@@ -464,8 +456,6 @@ export const useEditor = create<EditorState>((set, get) => ({
       sourceImage: null,
       sourceName: null,
       sourceCached: false,
-      bench: null,
-      benchRunning: false,
       savedAt: null,
       saving: false,
       saveError: null,
@@ -998,22 +988,6 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
   },
 
-  async runBench() {
-    const { grid } = get()
-    const renderer = getRenderer()
-    if (!renderer) {
-      set({ notice: '画布还没准备好，压测跑不了' })
-      return
-    }
-    set({ benchRunning: true, notice: null })
-    const phases = await runPanBench({
-      grid,
-      frames: 60,
-      size: () => renderer.size(),
-      draw: (vp) => renderer.draw(vp),
-    })
-    set({ bench: phases, benchRunning: false })
-  },
 }))
 
 /** 覆盖层写入：值先进 pending，不碰 grid */
@@ -1143,9 +1117,4 @@ function walkLine(
       row += sy
     }
   }
-}
-
-/** 导出给 UI 用的派生读数 */
-export function gridStats(grid: CellGrid) {
-  return { cells: grid.cols * grid.rows, used: usedCells(grid) }
 }

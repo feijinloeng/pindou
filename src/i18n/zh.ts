@@ -86,8 +86,6 @@ export const zh = {
     cells: '格数',
     boards: '板阵',
     undoMemory: '撤销栈',
-    bench: '跑性能自测',
-    benchRunning: '测量中…',
     hint: '空格 + 拖拽 = 平移，滚轮 = 缩放，右键 = 取色，Cmd/Ctrl+Z = 撤销。',
   },
 

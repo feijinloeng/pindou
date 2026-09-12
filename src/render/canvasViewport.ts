@@ -1,8 +1,6 @@
 /**
  * 视口：豆格坐标 ↔ 屏幕像素。渲染的唯一入口，其它地方不许自己算缩放平移。
  */
-import { EMPTY } from '../domain/grid'
-
 export interface Viewport {
   /** 每格像素数 */
   zoom: number
@@ -163,9 +161,4 @@ export function fitViewportToRegion(
     canvasW,
     canvasH,
   )
-}
-
-/** 空格判空用（渲染和工具都从这儿走，避免各处重复写 EMPTY 比较） */
-export function isEmpty(value: number): boolean {
-  return value === EMPTY
 }

@@ -39,8 +39,6 @@ export interface PdfSink {
   ): void
   addPage(widthPt: number, heightPt: number): void
   pageCount(): number
-  /** 只要内容流（测试和体积估算用），索引从 0 开始 */
-  contentStream(pageIndex: number): string
   output(): Uint8Array
 }
 
@@ -201,17 +199,6 @@ class JsPdfSink implements PdfSink {
     return this.doc.getNumberOfPages()
   }
 
-  /**
-   * 内容流（未压缩）。jsPDF 内部把每页存成"块的数组"，直接 String() 会得到逗号拼接的
-   * 垃圾，必须 join('') 才是真正的 PDF 操作符流。
-   */
-  contentStream(pageIndex: number): string {
-    const page = this.doc.internal.pages[pageIndex + 1] as unknown
-    // jsPDF 写出真正的 PDF 时是用 \n 把块拼起来的（解压产物验证过），这里保持一致
-    if (Array.isArray(page)) return page.join('\n')
-    return String(page ?? '')
-  }
-
   output(): Uint8Array {
     return new Uint8Array(this.doc.output('arraybuffer'))
   }
@@ -219,96 +206,6 @@ class JsPdfSink implements PdfSink {
 
 export function createPdfSink(options: JsPdfOptions): PdfSink {
   return new JsPdfSink(options)
-}
-
-/** 记账用的假 sink：只为了断言"画了什么"，不产生真 PDF */
-export class RecordingSink implements PdfSink {
-  ops: Array<{ op: string; args: Array<number | string> }> = []
-  readonly pageWidth: number
-  readonly pageHeight: number
-  pages = 1
-  private currentFill: Rgb = [0, 0, 0]
-  private currentStroke: Rgb = [0, 0, 0]
-
-  constructor(widthPt: number, heightPt: number) {
-    this.pageWidth = widthPt
-    this.pageHeight = heightPt
-  }
-
-  fillColor(rgb: Rgb): void {
-    this.currentFill = rgb
-    this.ops.push({ op: 'fillColor', args: [...rgb] })
-  }
-  textColor(rgb: Rgb): void {
-    this.ops.push({ op: 'textColor', args: [...rgb] })
-  }
-  strokeColor(rgb: Rgb): void {
-    this.currentStroke = rgb
-    this.ops.push({ op: 'strokeColor', args: [...rgb] })
-  }
-  lineWidth(pt: number): void {
-    this.ops.push({ op: 'lineWidth', args: [pt] })
-  }
-  dash(pattern: number[]): void {
-    this.ops.push({ op: 'dash', args: [...pattern] })
-  }
-  opacity(value: number): void {
-    this.ops.push({ op: 'opacity', args: [value] })
-  }
-  rect(x: number, y: number, w: number, h: number): void {
-    this.ops.push({ op: 'rect', args: [x, y, w, h] })
-  }
-  fill(): void {
-    this.ops.push({ op: 'fill', args: [...this.currentFill] })
-  }
-  moveTo(x: number, y: number): void {
-    this.ops.push({ op: 'moveTo', args: [x, y] })
-  }
-  lineTo(x: number, y: number): void {
-    this.ops.push({ op: 'lineTo', args: [x, y] })
-  }
-  stroke(): void {
-    this.ops.push({ op: 'stroke', args: [...this.currentStroke] })
-  }
-  text(str: string, x: number, y: number, sizePt: number, mode: 'fill' | 'fillstroke'): void {
-    this.ops.push({ op: 'text', args: [str, x, y, sizePt, mode] })
-  }
-  textBatch(
-    items: Array<{ text: string; x: number; baselineY: number }>,
-    sizePt: number,
-    fill: Rgb,
-    mode: 'fill' | 'fillstroke',
-  ): void {
-    this.ops.push({ op: 'textBatch', args: [String(items.length), sizePt, mode, ...fill] })
-  }
-  addPage(): void {
-    this.pages++
-    this.ops.push({ op: 'addPage', args: [] })
-  }
-  pageCount(): number {
-    return this.pages
-  }
-  contentStream(): string {
-    return ''
-  }
-  output(): Uint8Array {
-    return new Uint8Array(0)
-  }
-}
-
-/** 内容流统计：验收里那些"填充操作数 / 文字对象数"就是数这个 */
-export function countStreamOps(stream: string) {
-  const count = (re: RegExp) => (stream.match(re) ?? []).length
-  return {
-    // 各自锚定行首，别把同一行算两遍（jsPDF 每个操作符独占一行）
-    fillOps: count(/^f[\s\n]/gm),
-    strokeOps: count(/^S[\s\n]/gm),
-    rectOps: count(/ re[\s\n]/g),
-    textObjects: count(/Tj/g),
-    textMoves: count(/ Td[\s\n]/g) + count(/ Tm[\s\n]/g),
-    images: count(/\/XObject/g) + count(/\/Image/g),
-    bytes: stream.length,
-  }
 }
 
 export { PT_PER_MM }

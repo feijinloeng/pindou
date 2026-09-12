@@ -14,7 +14,6 @@ import {
 } from '../render/canvasViewport'
 import { BOARD_BG, drawCursorBox, drawPattern, fillCellRect } from '../render/drawPattern'
 import { GridBitmap } from '../render/gridBitmap'
-import { setRenderer } from '../render/rendererHandle'
 
 export default function CanvasStage() {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -140,16 +139,6 @@ export default function CanvasStage() {
   useEffect(() => {
     drawOverlay()
   }, [drawOverlay, version])
-
-  // 压测直接从这儿调绘制，不走 React 状态
-  useEffect(() => {
-    setRenderer({
-      draw: (view) => drawCommit({ ...view, dpr }),
-      size: () => ({ width: size.width, height: size.height }),
-      dpr: () => dpr,
-    })
-    return () => setRenderer(null)
-  }, [drawCommit, size, dpr])
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {

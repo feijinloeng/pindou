@@ -1,5 +1,5 @@
 import { EMPTY, type CellGrid, usageByIndex } from '../domain/grid'
-import type { Palette } from '../domain/palette'
+import { hexToRgb, type Palette } from '../domain/palette'
 import { PT_PER_MM } from '../domain/geometry'
 import { gray255, type PdfSink } from './pdf'
 
@@ -124,15 +124,6 @@ export function drawBom(sink: PdfSink, rows: BomRow[], options: BomDrawOptions):
     y -= rowHeight
   }
   return y
-}
-
-export function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '')
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ]
 }
 
 /** 用量 CSV：UTF-8 带 BOM，Excel 直接打开不乱码（第 11.4 节） */
