@@ -180,6 +180,52 @@ describe('编辑器 store', () => {
     expect(store().grid.cells[0]).toBe(before)
   })
 
+  it('撤销换色板要连色板本身一起回退（否则索引被另一套色解释）P2-17', () => {
+    const originalId = store().paletteId
+    // 空画布上换色板：一格都没改，但这次操作也得能撤销
+    store().setPalette('perler')
+    expect(store().paletteId).toBe('perler')
+    expect(store().canUndo).toBe(true)
+    store().undo()
+    expect(store().paletteId).toBe(originalId)
+    expect(store().palette.id).toBe(originalId)
+    store().redo()
+    expect(store().paletteId).toBe('perler')
+  })
+
+  it('撤销排除色号要连白名单一起回退 P2-17', () => {
+    store().newProject('测试') // 清干净撤销栈
+    const code = store().palette.colors[1].code
+    // 空画布上排除色号：一格都没改，但也得能撤销
+    expect(store().canUndo).toBe(false)
+    store().toggleCode(code)
+    expect(store().canUndo).toBe(true)
+    expect(store().allowedCodes).not.toContain(code)
+    store().undo()
+    expect(store().allowedCodes).toBeNull() // 原本就是 null = 全部可用
+    store().redo()
+    expect(store().allowedCodes).not.toContain(code)
+  })
+
+  it('setColor 不接受越界或已排除的色号 P2-18', () => {
+    store().setColor(3)
+    expect(store().colorIndex).toBe(3)
+    // 越界 / 非整数 / 负数都不写进状态
+    store().setColor(9999)
+    expect(store().colorIndex).toBe(3)
+    store().setColor(1.5)
+    expect(store().colorIndex).toBe(3)
+    store().setColor(-2)
+    expect(store().colorIndex).toBe(3)
+    expect(store().notice).toContain('不可用')
+    // 被排除的色号也不行：不许选中它
+    const excluded = store().palette.colors[7].code
+    store().toggleCode(excluded)
+    store().setColor(7)
+    expect(store().colorIndex).not.toBe(7)
+    expect(store().palette.colors[store().colorIndex].code).not.toBe(excluded)
+  })
+
   it('排除一个色号：用它画的格子全部重映射，且重映射后不再出现该色号', () => {
     store().setColor(0)
     store().pointerDown(5, 5, 0, false)
@@ -272,5 +318,37 @@ describe('编辑器 store', () => {
     expect(usedCells(store().grid)).toBe(11)
     expect(store().grid.cells[0]).toBe(1)
     expect(store().grid.cells[11]).toBe(EMPTY)
+  })
+
+  it('打开另一个工程时，上一个工程的临时运行状态全部清掉', () => {
+    store().setRecommendStrategy('edge-first')
+    store().setColor(7)
+    store().selectAll()
+    store().copySel()
+    expect(store().clipboard).not.toBeNull()
+
+    const layout = { placements: [{ board: 'mini26' as const, col: 0, row: 0 }], gapMm: 0 }
+    const geometry = deriveLayoutGeometry(layout)
+    const project = createProject({
+      name: '工程 B',
+      layout,
+      paletteId: 'mard-291',
+      grid: createGrid(geometry.cols, geometry.rows, EMPTY, geometry.placeable),
+    })
+    store().loadProject(project)
+
+    expect(store().name).toBe('工程 B')
+    expect(store().recommendStrategy).toBe('largest')
+    expect(store().clipboard).toBeNull()
+    expect(store().sourceImage).toBeNull()
+    expect(store().lastConvert).toBeNull()
+    expect(store().bench).toBeNull()
+    expect(store().benchRunning).toBe(false)
+    expect(store().savedAt).toBeNull()
+    expect(store().converting).toBe(false)
+    expect(store().progress).toBeNull()
+    // colorIndex 必须落在新色板的合法范围内（可能和上个工程不同）
+    expect(store().colorIndex).toBeGreaterThanOrEqual(0)
+    expect(store().colorIndex).toBeLessThan(store().palette.colors.length)
   })
 })

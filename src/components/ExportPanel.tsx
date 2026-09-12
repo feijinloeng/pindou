@@ -1,16 +1,13 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { useEditor } from '../editor/store'
 import {
-  buildBomCsv,
-  buildPaperPdf,
-  buildPaperZip,
-  buildPreviewPng,
-  buildScreenPdf,
-  downloadBytes,
-  safeName,
+  buildExportBundle,
+  estimateExport,
   type ExportContext,
+  type ExportSelection,
 } from '../render/exporters'
+import { downloadBytes, safeName } from '../render/download'
 import { t } from '../i18n/zh'
 import { Btn, Panel } from './ui'
 
@@ -28,7 +25,6 @@ export default function ExportPanel() {
   const pitchMm = useEditor((s) => s.palette.pitchMm)
   const name = useEditor((s) => s.name)
   const setName = useEditor((s) => s.setName)
-  const notice = useEditor((s) => s.notice)
   const [flags, setFlags] = useState<ExportFlags>({
     preview: true,
     screen: true,
@@ -38,8 +34,29 @@ export default function ExportPanel() {
   const [previewScale, setPreviewScale] = useState(16)
   const [paperScope, setPaperScope] = useState<'boards' | 'zip'>('boards')
   const [showCodes, setShowCodes] = useState(false)
+  const [screenCodes, setScreenCodes] = useState(true)
+  const [screenBom, setScreenBom] = useState(true)
   const [busy, setBusy] = useState(false)
   const copy = t('export')
+
+  const selection: ExportSelection = {
+    ...flags,
+    paperScope,
+    showCodes,
+    screenCodes,
+    screenBom,
+    previewScale,
+  }
+
+  // 导出前就把尺寸 / 页数 / 降级说出来，不能在导出完才发现不一样（P2-23/P2-24）
+  const baseName = safeName(name)
+  // safeName 超过 60 字会截断；用户看不到结果名就会以为文件丢了
+  const truncatedName = name.trim().length > 60 ? `${baseName}.zip` : ''
+  const estimate = useMemo(
+    () => estimateExport({ grid, palette, geom, pitchMm, name }, selection),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [grid, palette, geom, pitchMm, name, flags, paperScope, showCodes, screenCodes, screenBom, previewScale],
+  )
 
   const toggle = (key: keyof ExportFlags, value: boolean) => {
     const next = { ...flags, [key]: value }
@@ -52,36 +69,19 @@ export default function ExportPanel() {
     setBusy(true)
     try {
       const ctx: ExportContext = { grid, palette, geom, pitchMm, name }
-      const base = safeName(name)
-      if (flags.preview) {
-        const png = await buildPreviewPng(ctx, { pxPerCell: previewScale })
-        downloadBytes(png, `${base}-预览图.png`, 'image/png')
-      }
-      if (flags.screen) {
-        const pdf = buildScreenPdf(ctx, { showCodes: true, includeBom: true })
-        downloadBytes(pdf, `${base}-屏幕版.pdf`, 'application/pdf')
-      }
-      if (flags.paper && paperScope === 'boards') {
-        const pdf = buildPaperPdf(ctx, {
-          boards: geom.boards,
-          showCodes,
-          includeBom: true,
-          instructions: true,
-        })
-        downloadBytes(pdf, `${base}-纸面版.pdf`, 'application/pdf')
-      }
-      if (flags.paper && paperScope === 'zip') {
-        const zip = buildPaperZip(ctx, { showCodes })
-        downloadBytes(zip, `${base}-按板.zip`, 'application/zip')
-      }
-      if (flags.csv) {
-        downloadBytes(buildBomCsv(ctx), `${base}-用量.csv`, 'text/csv;charset=utf-8')
-      }
-      useEditor.getState().setNotice('导出完成')
+      const bundle = await buildExportBundle(ctx, selection)
+      // 只触发一次下载：多选已打包成 zip，浏览器不会拦
+      downloadBytes(bundle.bytes, bundle.filename, bundle.mime)
+      const head = bundle.files > 1 ? copy.exportBundled(bundle.files) : copy.exportDone
+      useEditor
+        .getState()
+        .setNotice(
+          bundle.warnings.length > 0 ? `${head}。${bundle.warnings.join('；')}` : head,
+        )
     } catch (error) {
       useEditor
         .getState()
-        .setNotice(error instanceof Error ? `导出失败：${error.message}` : '导出失败')
+        .setNotice(error instanceof Error ? `${copy.exportFailed}：${error.message}` : copy.exportFailed)
     } finally {
       setBusy(false)
     }
@@ -124,6 +124,26 @@ export default function ExportPanel() {
         />
         {copy.screen}
       </label>
+      {flags.screen && (
+        <div className="flex flex-col gap-1 pl-5 text-xs text-neutral-600">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={screenCodes}
+              onChange={(e) => setScreenCodes(e.target.checked)}
+            />
+            {copy.screenCodes}
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={screenBom}
+              onChange={(e) => setScreenBom(e.target.checked)}
+            />
+            {copy.screenBom}
+          </label>
+        </div>
+      )}
 
       <label className="flex items-center gap-2 text-xs text-neutral-600">
         <input
@@ -167,7 +187,30 @@ export default function ExportPanel() {
         {busy ? copy.exporting : copy.run}
       </Btn>
 
-      {notice && <p className="text-[11px] text-neutral-500">{notice}</p>}
+      <div className="rounded bg-neutral-50 p-2 text-[11px] leading-relaxed text-neutral-600">
+        <p>{copy.estimateTitle}</p>
+        <ul className="mt-1 flex flex-col gap-0.5">
+          {flags.preview && (
+            <li>
+              {copy.estimatePreview}：{estimate.previewWidth} × {estimate.previewHeight} px
+              {estimate.previewClamped ?
+                `（每格 ${estimate.previewActual.toFixed(2)}px，已被上限压低）` :
+                `（每格 ${estimate.previewActual}px）`}
+            </li>
+          )}
+          {flags.screen && <li>{copy.estimateScreen}：{estimate.screenPages} 页</li>}
+          {flags.paper && <li>{copy.estimatePaper}：{estimate.paperPages} 页</li>}
+          <li>
+            {copy.estimateName}：{truncatedName || baseName}
+            {truncatedName && <span className="text-amber-700">（原文件名超过 60 字，已截断）</span>}
+          </li>
+        </ul>
+        {estimate.warnings.map((warning) => (
+          <p key={warning} role="status" className="mt-1 text-amber-700">
+            {warning}
+          </p>
+        ))}
+      </div>
 
       <details className="text-[11px] leading-relaxed text-neutral-500">
         <summary className="cursor-pointer">{copy.helpTitle}</summary>

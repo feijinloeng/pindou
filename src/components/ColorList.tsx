@@ -1,10 +1,13 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 import { usageByIndex } from '../domain/grid'
 import { labelTextColor } from '../domain/palette'
 import { DISCLAIMER, PALETTES, TRADEMARKS } from '../data/palettes'
 import { useEditor } from '../editor/store'
 import { t } from '../i18n/zh'
+
+/** 291 个色号平铺着找太费劲：给搜索 + 几个常用过滤 */
+type Filter = 'all' | 'used' | 'free'
 
 export default function ColorList() {
   const palette = useEditor((s) => s.palette)
@@ -15,6 +18,8 @@ export default function ColorList() {
   const colorIndex = useEditor((s) => s.colorIndex)
   const a = useEditor.getState()
   const copy = t('editor')
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<Filter>('all')
 
   // 只在提交层变化时重算用量：131 万格扫一遍不能每个 mousemove 都做
   const usage = useMemo(
@@ -24,6 +29,20 @@ export default function ColorList() {
   )
   const usedCount = usage.reduce((n, v) => n + (v > 0 ? 1 : 0), 0)
   const excluded = new Set(allowedCodes ?? [])
+
+  const shown = palette.colors
+    .map((color, i) => ({ color, i }))
+    .filter(({ color, i }) => {
+      if (filter === 'used' && usage[i] === 0) return false
+      if (filter === 'free' && excluded.has(color.code)) return false
+      const needle = search.trim().toLowerCase()
+      if (!needle) return true
+      return (
+        color.code.toLowerCase().includes(needle) ||
+        color.name.toLowerCase().includes(needle) ||
+        color.hex.toLowerCase().includes(needle)
+      )
+    })
 
   return (
     <section className="border-b border-neutral-200">
@@ -57,14 +76,55 @@ export default function ColorList() {
         )}
       </div>
 
+      <div className="flex flex-col gap-1 px-3 pb-2">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={copy.colorSearch}
+          aria-label={copy.colorSearch}
+          className="rounded border border-neutral-300 px-2 py-1 text-xs"
+        />
+        <div className="flex flex-wrap gap-1 text-[11px]">
+          {(
+            [
+              ['all', copy.colorAll],
+              ['used', copy.colorUsed],
+              ['free', copy.colorFree],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={filter === id}
+              onClick={() => setFilter(id)}
+              className={`rounded border px-2 py-0.5 ${
+                filter === id
+                  ? 'border-neutral-900 bg-neutral-900 text-white'
+                  : 'border-neutral-300 text-neutral-600'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="ml-auto self-center text-neutral-400">
+            {shown.length}/{palette.colors.length}
+          </span>
+        </div>
+      </div>
+
       <div className="grid grid-cols-4 gap-1 p-2">
-        {palette.colors.map((color, i) => {
+        {shown.map(({ color, i }) => {
           const isExcluded = excluded.has(color.code)
           return (
             <div key={color.code} className="group relative">
               <button
                 type="button"
                 title={`${color.code} ${color.name} · ${usage[i]} 颗`}
+                aria-pressed={i === colorIndex}
+                aria-label={`色号 ${color.code} ${color.name}，${usage[i]} 颗${
+                  isExcluded ? '（已排除）' : ''
+                }`}
                 onClick={() => a.setColor(i)}
                 className={`flex h-11 w-full flex-col items-center justify-center rounded border text-[10px] ${
                   isExcluded
@@ -93,8 +153,10 @@ export default function ColorList() {
               <button
                 type="button"
                 title={isExcluded ? `恢复 ${color.code}` : `排除 ${color.code}`}
+                aria-label={isExcluded ? `恢复色号 ${color.code}` : `排除色号 ${color.code}`}
+                aria-pressed={isExcluded}
                 onClick={() => a.toggleCode(color.code)}
-                className="absolute -top-1 -right-1 hidden h-4 w-4 items-center justify-center rounded-full bg-neutral-900 text-[10px] leading-none text-white group-hover:flex"
+                className="absolute -top-1 -right-1 hidden h-4 w-4 items-center justify-center rounded-full bg-neutral-900 text-[10px] leading-none text-white group-hover:flex group-focus-within:flex focus:flex"
               >
                 {isExcluded ? '+' : '×'}
               </button>
@@ -102,6 +164,9 @@ export default function ColorList() {
           )
         })}
       </div>
+      {shown.length === 0 && (
+        <p className="px-3 pb-2 text-[11px] text-neutral-500">{copy.colorNone}</p>
+      )}
 
       <p className="px-3 pb-3 text-[10px] leading-relaxed text-neutral-400">
         {DISCLAIMER || t('disclaimer')}

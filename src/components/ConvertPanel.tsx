@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-import { resolveDither, STRATEGY_LIST } from '../conversion/strategies'
+import { AUTO_OPTION, resolveDither, STRATEGY_LIST } from '../conversion/strategies'
 import { useEditor } from '../editor/store'
 import { t } from '../i18n/zh'
 import type { SourceImage } from '../conversion/types'
@@ -9,13 +9,15 @@ import { Btn, Label, Panel } from './ui'
 export default function ConvertPanel() {
   const sourceImage = useEditor((s) => s.sourceImage)
   const sourceName = useEditor((s) => s.sourceName)
+  const sourceCached = useEditor((s) => s.sourceCached)
   const conversion = useEditor((s) => s.conversion)
   const converting = useEditor((s) => s.converting)
   const progress = useEditor((s) => s.progress)
   const lastConvert = useEditor((s) => s.lastConvert)
   const grid = useEditor((s) => s.grid)
   const fileRef = useRef<HTMLInputElement>(null)
-  // 显示"实际生效"的抖动，不是参数里的 null
+  // 显示"实际生效"的抖动，不是参数里的 null。选了“自动”时实际值要转换完才知道
+  const auto = conversion.strategyId === 'auto'
   const dither = resolveDither(conversion.strategyId, conversion.dither)
   const a = useEditor.getState()
   const copy = t('convert')
@@ -46,6 +48,9 @@ export default function ConvertPanel() {
         {sourceName ? `${copy.imported}：${sourceName}` : copy.none} · 画布 {grid.cols}×
         {grid.rows}
       </p>
+      {sourceCached && (
+        <p className="rounded bg-amber-50 p-1.5 text-[11px] text-amber-800">{copy.cachedSource}</p>
+      )}
 
       <label className="flex flex-col gap-1 text-xs text-neutral-600">
         {copy.strategy}
@@ -54,6 +59,9 @@ export default function ConvertPanel() {
           value={conversion.strategyId}
           onChange={(e) => a.setConversion({ strategyId: e.target.value as never })}
         >
+          <option value={AUTO_OPTION.id}>
+            {AUTO_OPTION.label} · {AUTO_OPTION.description}
+          </option>
           {STRATEGY_LIST.map((s) => (
             <option key={s.id} value={s.id}>
               {s.label} · {s.description}
@@ -97,11 +105,13 @@ export default function ConvertPanel() {
         )}
       </label>
       <p className="text-[11px] text-neutral-500">
-        {conversion.dither === null
-          ? `「${STRATEGY_BY_ID(conversion.strategyId)}」默认${dither > 0 ? `抖动 ${dither}` : '不抖动'}`
-          : dither > 0
+        {conversion.dither !== null
+          ? dither > 0
             ? `手动抖动 ${dither}`
-            : '已关掉抖动'}
+            : '已关掉抖动'
+          : auto
+            ? '抖动跟随自动选定的档位（转换后显示实际值）'
+            : `「${STRATEGY_BY_ID(conversion.strategyId)}」默认${dither > 0 ? `抖动 ${dither}` : '不抖动'}`}
       </p>
 
       <label className="flex items-center gap-2 text-xs text-neutral-600">
@@ -160,7 +170,9 @@ export default function ConvertPanel() {
         <div className="rounded bg-neutral-50 p-2 text-[11px] leading-relaxed text-neutral-600">
           {copy.result}：{lastConvert.used} 色 · {lastConvert.ms} ms ·{' '}
           {kindLabel(lastConvert.kind)}
+          {auto ? ` · 自动选了「${STRATEGY_BY_ID(lastConvert.strategy)}」` : ''}
           {lastConvert.cropped ? ' · 已裁到主体' : ''}
+          {lastConvert.cropSkipped ? ' · 背景不确定，没自动裁' : ''}
           {lastConvert.dropped > 0 ? ` · 限色并掉了 ${lastConvert.dropped} 色` : ''}
         </div>
       )}

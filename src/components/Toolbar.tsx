@@ -28,9 +28,33 @@ export default function Toolbar() {
   const layout = useEditor((s) => s.layout)
   const pickerOpen = useEditor((s) => s.pickerOpen)
   const openPicker = useEditor((s) => s.openPicker)
+  const savedAt = useEditor((s) => s.savedAt)
+  const saving = useEditor((s) => s.saving)
+  const saveError = useEditor((s) => s.saveError)
+  const saveNow = useEditor((s) => s.saveNow)
+  const name = useEditor((s) => s.name)
+  const setName = useEditor((s) => s.setName)
+  const customer = useEditor((s) => s.customer)
+  const setCustomer = useEditor((s) => s.setCustomer)
+  const panelsOpen = useEditor((s) => s.panelsOpen)
+  const togglePanels = useEditor((s) => s.togglePanels)
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-neutral-200 bg-white px-3 py-2">
+      <input
+        className="w-40 rounded border border-neutral-300 px-2 py-1 text-xs"
+        value={name}
+        placeholder={t('library').namePlaceholder}
+        aria-label={t('library').namePlaceholder}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <input
+        className="w-40 rounded border border-neutral-300 px-2 py-1 text-xs"
+        value={customer ?? ''}
+        placeholder={t('editor').customerPlaceholder}
+        aria-label={t('editor').customer}
+        onChange={(e) => setCustomer(e.target.value.trim() ? e.target.value : null)}
+      />
       <Btn active={pickerOpen} onClick={openPicker} title="重新拼台面（会保留重叠位置上的内容）">
         {t('editor').chooseBoard}
       </Btn>
@@ -65,7 +89,39 @@ export default function Toolbar() {
         {t('editor').showCodes}
       </Btn>
 
-      <label className="ml-auto flex items-center gap-2 text-xs text-neutral-600">
+      <button
+        type="button"
+        onClick={togglePanels}
+        aria-pressed={panelsOpen}
+        title={t('editor').panelsHint}
+        className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100"
+      >
+        {panelsOpen ? t('editor').panelsHide : t('editor').panelsShow}
+      </button>
+
+      <span
+        aria-live="polite"
+        className={`ml-auto text-xs tabular-nums ${saveError ? 'text-red-600' : 'text-neutral-500'}`}
+      >
+        {saving
+          ? t('editor').saving
+          : saveError
+            ? t('editor').saveRetry
+            : savedAt
+              ? `${t('editor').savedAt} ${savedTime(savedAt)}`
+              : t('editor').save}
+      </span>
+      <button
+        type="button"
+        onClick={() => void saveNow()}
+        disabled={saving}
+        title={t('editor').saveHint}
+        className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-40"
+      >
+        {t('editor').save}
+      </button>
+
+      <label className="flex items-center gap-2 text-xs text-neutral-600">
         {t('editor').zoom}
         <input
           type="range"
@@ -83,4 +139,11 @@ export default function Toolbar() {
       </label>
     </div>
   )
+}
+
+/** ISO 时间 → 14:05（本地时区，只给用户看） */
+function savedTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso.slice(11, 16)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }

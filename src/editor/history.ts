@@ -4,11 +4,26 @@ import { type CellGrid, inBounds } from '../domain/grid'
  * 增量撤销：只记被改动的格，不存全量快照。
  * 500 万格的全量快照是 10 MB/次，50 步就是 500 MB —— 这就是不能快照的原因。
  */
+/**
+ * 换色板 / 排除色号会改「网格以外的状态」：只回放格子的话，
+ * 撤销后网格值回去了、色板还是新的，同一堆索引会被另一套色解释 —— 看着就完全不对。
+ * 所以这类补丁顺带把元数据快照一起存。
+ */
+export interface HistoryMeta {
+  paletteId: string
+  allowedCodes: string[] | null
+  colorIndex: number
+}
+
 export interface CellPatch {
   label: string
   indexes: Uint32Array
   before: Uint16Array
   after: Uint16Array
+  /** 撤销时要恢复的元数据 */
+  metaBefore?: HistoryMeta
+  /** 重做时要恢复的元数据 */
+  metaAfter?: HistoryMeta
 }
 
 export const HISTORY_DEPTH = 50

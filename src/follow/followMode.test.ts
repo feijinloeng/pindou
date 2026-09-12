@@ -94,6 +94,23 @@ describe('进度', () => {
     expect(isColorComplete(regions, new Set([0, 1]))).toBe(false)
   })
 
+  it('没有可拼内容时进度是 0%，不是 100%', () => {
+    const empty = createGrid(4, 4)
+    const progress = progressOf(findRegions(empty, 5), new Set())
+    expect(progress.total).toBe(0)
+    expect(progress.ratio).toBe(0)
+  })
+
+  it('空档把连通域切开，空档里的脏格子也不参与统计', () => {
+    // 5 格同色，中间一格底下没板
+    const grid = createGrid(5, 1, 5)
+    grid.placeable = new Uint8Array([1, 1, 0, 1, 1])
+    const regions = findRegions(grid, 5)
+    expect(regions).toHaveLength(2)
+    expect(regions.map((r) => r.size)).toEqual([2, 2])
+    expect(progressOf(regions, new Set()).total).toBe(4)
+  })
+
   it('没有区域时不算完成', () => {
     expect(isColorComplete([], new Set())).toBe(false)
   })

@@ -1,9 +1,17 @@
-import Follow from './pages/Follow'
-import Editor from './pages/Editor'
-import Library from './pages/Library'
+import { lazy, Suspense } from 'react'
+
 import ErrorBoundary from './components/ErrorBoundary'
 import { navigate, useRoute } from './router'
 import { t } from './i18n/zh'
+
+/**
+ * 三个页面各自一个 chunk（P2-26）：
+ * 作品库不需要加载画布渲染、图片转换和 PDF 导出那一大堆代码。
+ * 色板数据是共享的，三个页面都要用，所以仍然在首屏的那个 chunk 里。
+ */
+const Library = lazy(() => import('./pages/Library'))
+const Editor = lazy(() => import('./pages/Editor'))
+const Follow = lazy(() => import('./pages/Follow'))
 
 const TABS = [
   { route: 'library', label: t('nav').library },
@@ -37,7 +45,11 @@ export default function App() {
         </nav>
       </header>
       <main className="min-h-0 flex-1">
-        <Page />
+        <Suspense
+          fallback={<p className="p-6 text-sm text-neutral-500">{t('loading')}</p>}
+        >
+          <Page />
+        </Suspense>
       </main>
       </div>
     </ErrorBoundary>

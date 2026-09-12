@@ -26,6 +26,7 @@ export default function BoardPicker() {
   const applyLayout = useEditor((s) => s.applyLayout)
   const applyPreset = useEditor((s) => s.applyPreset)
   const setNotice = useEditor((s) => s.setNotice)
+  const closePicker = useEditor((s) => s.closePicker)
   const copy = t('picker')
 
   const [type, setType] = useState<BoardTypeId>(() => layout.placements[0]?.board ?? 'mini52')
@@ -38,6 +39,26 @@ export default function BoardPicker() {
   const wrapRef = useRef<HTMLDivElement>(null)
   const nextKey = useRef(draft.length)
   const [wrapSize, setWrapSize] = useState({ width: 0, height: 0 })
+
+  /** 这次排板改了东西没有（没改就直接关，改了要先问一声） */
+  const dirty = useMemo(() => !samePlacements(draft, layout.placements), [draft, layout.placements])
+
+  // 没确认就关页面 = 丢掉这次排板。浏览器只肯给一句通用提示，但总比默默丢了好
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
+  /** 退出选板：draft 改了又不确认 = 丢掉这次排板，先问一声 */
+  const leave = () => {
+    if (dirty && !window.confirm(copy.discard)) return
+    closePicker()
+  }
 
   useEffect(() => {
     const el = wrapRef.current
@@ -100,6 +121,42 @@ export default function BoardPicker() {
         p.row < candidate.row + size
       )
     })
+  }
+
+  /** 移动一块板（指针和键盘共用同一套重叠校验） */
+  const moveBoard = (key: number, col: number, row: number) => {
+    const target = draft.find((p) => p.key === key)
+    if (!target) return
+    const candidate: BoardPlacement = { board: target.board, col: Math.max(0, col), row: Math.max(0, row) }
+    if (overlaps(candidate, key)) {
+      setError(copy.overlap)
+      return
+    }
+    setError(null)
+    setDraft((current) =>
+      current.map((p) => (p.key === key ? { ...p, col: candidate.col, row: candidate.row } : p)),
+    )
+  }
+
+  const removeBoard = (key: number) => {
+    setDraft((current) => current.filter((item) => item.key !== key))
+    setError(null)
+  }
+
+  /** 键盘/按钮添加：从左上往右下找第一个不重叠的吸附位 */
+  const addBoard = () => {
+    const size = BOARD_PROFILES[type].pegs
+    const stepBeads = SNAP[BOARD_PROFILES[type].pitchMm] ?? size
+    for (let row = 0; row <= 400; row += stepBeads) {
+      for (let col = 0; col <= 400; col += stepBeads) {
+        const candidate: BoardPlacement = { board: type, col, row }
+        if (overlaps(candidate)) continue
+        setError(null)
+        setDraft((current) => [...current, { ...candidate, key: nextKey.current++ }])
+        return
+      }
+    }
+    setError(copy.overlap)
   }
 
   const addAt = (clientX: number, clientY: number, boardType: BoardTypeId) => {
@@ -199,6 +256,13 @@ export default function BoardPicker() {
               {copy.clear}
             </button>
           )}
+          <button
+            type="button"
+            className="rounded border border-neutral-300 px-2 py-1"
+            onClick={addBoard}
+          >
+            {copy.addBoard}
+          </button>
           {draft.length > 0 && (
             <button
               type="button"
@@ -211,6 +275,9 @@ export default function BoardPicker() {
               {copy.undoOne}
             </button>
           )}
+          <button type="button" className="rounded border border-neutral-300 px-2 py-1" onClick={leave}>
+            {copy.cancel}
+          </button>
           <span className="ml-auto flex items-center gap-1 text-neutral-500">
             {copy.zoom}
             <input
@@ -258,25 +325,23 @@ export default function BoardPicker() {
                 row: Math.max(0, Math.round((e.clientY - rect.top) / zoom / stepBeads) * stepBeads),
               })
             }}
-            onPointerUp={() => {
+            onPointerUp={(e) => {
+              e.currentTarget.releasePointerCapture?.(e.pointerId)
               if (!dragging) return
               const { key, col, row } = dragging
-              const target = draft.find((p) => p.key === key)
               setDragging(null)
-              if (!target) return
-              const candidate: BoardPlacement = { board: target.board, col, row }
-              if (overlaps(candidate, key)) {
-                setError(copy.overlap)
-                return
-              }
-              setError(null)
-              setDraft((current) => current.map((p) => (p.key === key ? { ...p, col, row } : p)))
+              moveBoard(key, col, row)
             }}
+            // pointercancel / 丢捕获 = 拖动被系统或滚动取消：直接丢弃这次拖动，
+            // 不要让它悬在那里，也不要悄悄把板挪到光标最后经过的位置
+            onPointerCancel={() => setDragging(null)}
+            onLostPointerCapture={() => setDragging(null)}
             onPointerLeave={() => setDragging(null)}
-            className="relative"
+            className="relative touch-none"
             style={{
               width: extent.cols * zoom,
               height: extent.rows * zoom,
+              touchAction: 'none',
               backgroundImage: `
                 linear-gradient(to right, #d4d4d4 1px, transparent 1px),
                 linear-gradient(to bottom, #d4d4d4 1px, transparent 1px),
@@ -293,18 +358,37 @@ export default function BoardPicker() {
               return (
                 <div
                   key={p.key}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`第 ${p.row / snap + 1} 行 第 ${p.col / snap + 1} 列的 ${size}×${size} 板（方向键移动，Delete 删除）`}
+                  onKeyDown={(e) => {
+                    const stepBeads = SNAP[BOARD_PROFILES[p.board].pitchMm] ?? size
+                    const jump = e.shiftKey ? size : stepBeads
+                    if (e.key === 'ArrowLeft') moveBoard(p.key, live.col - jump, live.row)
+                    else if (e.key === 'ArrowRight') moveBoard(p.key, live.col + jump, live.row)
+                    else if (e.key === 'ArrowUp') moveBoard(p.key, live.col, live.row - jump)
+                    else if (e.key === 'ArrowDown') moveBoard(p.key, live.col, live.row + jump)
+                    else if (e.key === 'Delete' || e.key === 'Backspace') removeBoard(p.key)
+                    else if (e.key === 'Enter' || e.key === ' ') setType(p.board)
+                    else return
+                    e.preventDefault()
+                    e.stopPropagation()
+                  }}
+                  onFocus={() => setType(p.board)}
                   onPointerDown={(e) => {
                     if (e.button !== 0) return
                     e.currentTarget.setPointerCapture(e.pointerId)
                     setDragging({ key: p.key, col: live.col, row: live.row })
                     setType(p.board)
                   }}
+                  onPointerCancel={() => setDragging(null)}
+                  onLostPointerCapture={() => setDragging(null)}
                   onContextMenu={(e) => {
                     e.preventDefault()
-                    setDraft((current) => current.filter((item) => item.key !== p.key))
+                    removeBoard(p.key)
                   }}
                   title={`${size}×${size} · ${(size * BOARD_PROFILES[p.board].pitchMm).toFixed(1)}mm · ${copy.removeHint}`}
-                  className={`absolute flex cursor-move items-center justify-center rounded-sm border-2 text-[10px] ${
+                  className={`absolute flex cursor-move touch-none items-center justify-center rounded-sm border-2 text-[10px] focus:outline-2 focus:outline-sky-500 ${
                     active
                       ? 'border-sky-600 bg-sky-200/70 text-sky-900'
                       : 'border-neutral-500 bg-white/80 text-neutral-600'
@@ -339,7 +423,11 @@ export default function BoardPicker() {
           {holes > 0 && <Row label={copy.holes} value={holes} warn />}
         </div>
 
-        {error && <p className="rounded bg-red-50 p-2 text-red-700">{error}</p>}
+        {error && (
+          <p role="alert" className="rounded bg-red-50 p-2 text-red-700">
+            {error}
+          </p>
+        )}
 
         <button
           type="button"
@@ -348,6 +436,13 @@ export default function BoardPicker() {
           className="rounded bg-neutral-900 px-3 py-2 text-sm text-white disabled:bg-neutral-300"
         >
           {copy.confirm}
+        </button>
+        <button
+          type="button"
+          onClick={leave}
+          className="rounded border border-neutral-300 px-3 py-2 text-sm"
+        >
+          {copy.cancelPick}
         </button>
         <p className="text-[11px] leading-relaxed text-neutral-500">{copy.confirmHint}</p>
 
@@ -374,6 +469,12 @@ export default function BoardPicker() {
       </aside>
     </div>
   )
+}
+
+/** 两份摆放列表是不是同一个东西（顺序也算，用户看到的就是这个顺序） */
+function samePlacements(a: BoardPlacement[], b: BoardPlacement[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((p, i) => p.board === b[i].board && p.col === b[i].col && p.row === b[i].row)
 }
 
 function Row({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {

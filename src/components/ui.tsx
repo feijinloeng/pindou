@@ -10,6 +10,7 @@ export function Btn({
 }: {
   children: ReactNode
   onClick?: () => void
+  /** 开关类按钮传布尔值 → 同时输出 aria-pressed；普通按钮不传 */
   active?: boolean
   disabled?: boolean
   title?: string
@@ -20,6 +21,7 @@ export function Btn({
       type="button"
       title={title}
       disabled={disabled}
+      aria-pressed={active === undefined ? undefined : active}
       onClick={onClick}
       className={`rounded border px-2 py-1 text-xs whitespace-nowrap transition ${
         wide ? 'w-full text-left' : ''

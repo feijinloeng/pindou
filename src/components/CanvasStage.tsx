@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { t } from '../i18n/zh'
 import { useEditor } from '../editor/store'
+import { shouldHandleCanvasKey } from '../editor/keyboard'
 import {
   CODE_ZOOM,
+  cellToScreen,
   clampViewport,
   panBy,
   screenToCell,
@@ -20,10 +23,13 @@ export default function CanvasStage() {
   const bitmap = useMemo(() => new GridBitmap(), [])
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [cursor, setCursor] = useState<{ col: number; row: number } | null>(null)
+  /** 键盘光标：方向键移动，Enter 应用当前工具 */
+  const [kbCell, setKbCell] = useState<{ col: number; row: number } | null>(null)
   const panRef = useRef<{ x: number; y: number } | null>(null)
   const spaceRef = useRef(false)
 
   const grid = useEditor((s) => s.grid)
+  const palette = useEditor((s) => s.palette)
   const geom = useEditor((s) => s.geom)
   const vp = useEditor((s) => s.vp)
   const commitVersion = useEditor((s) => s.commitVersion)
@@ -33,10 +39,15 @@ export default function CanvasStage() {
   const setVp = useEditor((s) => s.setVp)
   const fitTo = useEditor((s) => s.fitTo)
 
-  const [dpr, setDpr] = useState(1)
+  const [dpr, setDpr] = useState(() =>
+    typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2),
+  )
 
+  // 换屏幕 / 改系统缩放时跟着变（初始值在 useState 里就直接拿到了，不用先渲染再修正）
   useEffect(() => {
-    setDpr(Math.min(window.devicePixelRatio || 1, 2))
+    const update = () => setDpr(Math.min(window.devicePixelRatio || 1, 2))
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
   }, [])
 
   useEffect(() => {
@@ -49,15 +60,21 @@ export default function CanvasStage() {
     return () => ro.disconnect()
   }, [])
 
-  // 换板阵（或第一次拿到尺寸）时自动铺满；之后由用户自己的缩放说了算
+  // 换板阵（或第一次拿到尺寸）时自动铺满；之后由用户自己的缩放说了算。
+  // key 必须包含板阵结构，不能只看外接框尺寸 —— L 形改成同一尺寸的矩形时
+  // cols×rows 没变，但台面已经不同了。
+  const layoutKey = useMemo(
+    () => geom.boards.map((b) => `${b.c0},${b.r0},${b.cw},${b.rh}`).join('|'),
+    [geom],
+  )
   const fittedRef = useRef('')
   useEffect(() => {
     if (!size.width || !size.height) return
-    const key = `${geom.cols}x${geom.rows}`
+    const key = `${geom.cols}x${geom.rows}#${layoutKey}`
     if (fittedRef.current === key) return
     fittedRef.current = key
     fitTo(size.width, size.height, dpr)
-  }, [geom, size, dpr, fitTo])
+  }, [geom, layoutKey, size, dpr, fitTo])
 
   useEffect(() => {
     for (const c of [commitRef.current, overlayRef.current]) {
@@ -117,7 +134,8 @@ export default function CanvasStage() {
       }
     }
     if (cursor) drawCursorBox(ctx, s.vp, cursor.col, cursor.row)
-  }, [cursor, dpr])
+    if (kbCell) drawCursorBox(ctx, s.vp, kbCell.col, kbCell.row)
+  }, [cursor, kbCell, dpr])
 
   useEffect(() => {
     drawOverlay()
@@ -135,6 +153,8 @@ export default function CanvasStage() {
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
+      // 在输入框里打空格不该开启"空格拖画布"
+      if (!shouldHandleCanvasKey(e)) return
       if (e.code === 'Space') spaceRef.current = true
     }
     const up = (e: KeyboardEvent) => {
@@ -223,12 +243,67 @@ export default function CanvasStage() {
     }
   }, [size.width, size.height])
 
+  /** 键盘光标移到可视区外就跟着推视口，不然光标跑到看不见的地方了 */
+  const scrollToCell = (cell: { col: number; row: number }) => {
+    const s = useEditor.getState()
+    const point = cellToScreen(s.vp, cell.col, cell.row)
+    const pad = s.vp.zoom * 2
+    let dx = 0
+    let dy = 0
+    if (point.x < 0) dx = -point.x + pad
+    if (point.y < 0) dy = -point.y + pad
+    if (point.x + s.vp.zoom > size.width) dx = size.width - point.x - s.vp.zoom - pad
+    if (point.y + s.vp.zoom > size.height) dy = size.height - point.y - s.vp.zoom - pad
+    if (!dx && !dy) return
+    s.setVp(clampViewport(panBy(s.vp, dx, dy), s.grid.cols, s.grid.rows, size.width, size.height))
+  }
+
+  const moveKbCursor = (dc: number, dr: number) => {
+    const s = useEditor.getState()
+    const from = kbCell ?? screenToCell(s.vp, size.width / 2, size.height / 2)
+    const next = {
+      col: Math.min(s.grid.cols - 1, Math.max(0, from.col + dc)),
+      row: Math.min(s.grid.rows - 1, Math.max(0, from.row + dr)),
+    }
+    setKbCell(next)
+    scrollToCell(next)
+  }
+
+  const kbIndex = kbCell ? kbCell.row * grid.cols + kbCell.col : -1
+  const kbValue = kbIndex >= 0 ? grid.cells[kbIndex] : null
+  const kbCode =
+    kbValue === null || kbValue === 0xffff ? null : (palette.colors[kbValue]?.code ?? null)
+
   return (
     <div ref={wrapRef} className="relative h-full w-full touch-none overflow-hidden overscroll-none">
       <canvas ref={commitRef} className="absolute left-0 top-0" />
       <canvas
         ref={overlayRef}
-        className="absolute left-0 top-0 touch-none"
+        className="absolute left-0 top-0 touch-none focus:outline-2 focus:outline-sky-500"
+        tabIndex={0}
+        role="application"
+        aria-label="豆格画布：方向键移动光标，Enter 应用当前工具"
+        aria-describedby="canvas-help"
+        onKeyDown={(e) => {
+          if (!shouldHandleCanvasKey(e)) return
+          const step = e.shiftKey ? 5 : 1
+          if (e.key === 'ArrowLeft') moveKbCursor(-step, 0)
+          else if (e.key === 'ArrowRight') moveKbCursor(step, 0)
+          else if (e.key === 'ArrowUp') moveKbCursor(0, -step)
+          else if (e.key === 'ArrowDown') moveKbCursor(0, step)
+          else if (e.key === 'Enter') {
+            const s = useEditor.getState()
+            const at = kbCell ?? screenToCell(s.vp, size.width / 2, size.height / 2)
+            s.pointerDown(at.col, at.row, 0, false)
+            s.pointerUp()
+          } else return
+          e.preventDefault()
+        }}
+        onFocus={() => {
+          if (kbCell) return
+          const s = useEditor.getState()
+          setKbCell(screenToCell(s.vp, size.width / 2, size.height / 2))
+        }}
         onContextMenu={(e) => e.preventDefault()}
         onPointerDown={(e) => {
           const { x, y } = localPoint(e)
@@ -263,8 +338,27 @@ export default function CanvasStage() {
           useEditor.getState().pointerUp()
         }}
       />
-      <div className="pointer-events-none absolute right-3 bottom-3 rounded bg-white/80 px-2 py-1 text-xs tabular-nums text-neutral-600">
-        {vp.zoom >= CODE_ZOOM ? '100%+ 色号' : `${Math.round(vp.zoom * 100)}%`}
+      <div className="pointer-events-none absolute right-3 bottom-3 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => fitTo(size.width, size.height, dpr)}
+          title={t('editor').fitCanvasHint}
+          className="pointer-events-auto rounded border border-neutral-300 bg-white/90 px-2 py-1 text-xs text-neutral-700 hover:bg-white"
+        >
+          {t('editor').fitCanvas}
+        </button>
+        <span className="rounded bg-white/80 px-2 py-1 text-xs tabular-nums text-neutral-600">
+          {vp.zoom >= CODE_ZOOM ? '100%+ 色号' : `${Math.round(vp.zoom * 100)}%`}
+        </span>
+      </div>
+      <p id="canvas-help" className="sr-only">
+        方向键移动光标，按住 Shift 加方向键一次跳 5 格，Enter 把当前工具用在光标那一格上。
+        Cmd 或 Ctrl 加 Z 撤销，V/B/E/I/G/M 切换工具。
+      </p>
+      <div className="sr-only" role="status" aria-live="polite">
+        {kbCell
+          ? `第 ${kbCell.row + 1} 行 第 ${kbCell.col + 1} 列，${kbCode ? `色号 ${kbCode}` : '空格'}`
+          : '画布未聚焦'}
       </div>
     </div>
   )

@@ -12,6 +12,7 @@ import { usageByIndex } from '../domain/grid'
 import {
   clampViewport,
   fitViewport,
+  fitViewportToRegion,
   panBy,
   screenToCell,
   zoomFromWheel,
@@ -24,6 +25,8 @@ import { Btn } from '../components/ui'
 
 /** 稳定引用，免得每次 render 都当成新数组触发重算 */
 const NO_REGIONS: never[] = []
+/** 超过这个位移才算"拖动画布"，否则就是一次点击（否则想标记却把视口挪走了） */
+const DRAG_THRESHOLD_PX = 4
 
 const STRATEGIES = [
   { id: 'largest', label: '最大的区域' },
@@ -49,6 +52,8 @@ export default function Follow() {
   const bitmap = useMemo(() => new GridBitmap(), [])
   const [vp, setVp] = useState<Viewport>(() => fitViewport(grid.cols, grid.rows, 900, 700, 1))
   const [size, setSize] = useState({ width: 0, height: 0 })
+  /** 按下时的起点：没超过阈值就不平移 */
+  const downRef = useRef<{ x: number; y: number } | null>(null)
   const panRef = useRef<{ x: number; y: number } | null>(null)
 
   const usage = useMemo(
@@ -188,7 +193,7 @@ export default function Follow() {
     })
   }, [grid, palette, vp, size, dpr, geom, bitmap, focusIndex, completedMask, version])
 
-  /** 全色总进度：用已经算好的区域表，不再重复扫全图 */
+  /** 全色总进度：用已经算好的区域表，不再重复扫全图。没有可拼内容时返回 null */
   const overall = useMemo(() => {
     let total = 0
     let done = 0
@@ -201,14 +206,14 @@ export default function Follow() {
         if (finished.has(region.id)) done += region.size
       }
     }
-    return total === 0 ? 1 : done / total
+    return total === 0 ? null : done / total
   }, [allRegions, palette, making])
 
   const recommend = () => {
     const next = recommendRegion(regions, completed, strategy, lastPoint)
     if (!next) return
     setVp((current) =>
-      fitViewportToRegion(current, next.bbox, size.width, size.height),
+      fitViewportToRegion(current, next.bbox, size.width, size.height, grid.cols, grid.rows),
     )
   }
 
@@ -218,7 +223,9 @@ export default function Follow() {
         <div className="border-b border-neutral-200 px-3 py-2">
           <h3 className="text-[11px] font-semibold tracking-wide text-neutral-500">{copy.colors}</h3>
           <p className="mt-1 text-xs text-neutral-500">
-            {copy.overallProgress} {(overall * 100).toFixed(1)}%
+            {overall === null
+              ? copy.empty
+              : `${copy.overallProgress} ${(overall * 100).toFixed(1)}%`}
           </p>
           <details className="mt-1 text-[11px] text-neutral-500">
             <summary className="cursor-pointer select-none">{copy.whatIsIt}</summary>
@@ -230,7 +237,10 @@ export default function Follow() {
             </ol>
           </details>
           <div className="mt-1 h-1.5 w-full overflow-hidden rounded bg-neutral-200">
-            <div className="h-full bg-emerald-500" style={{ width: `${overall * 100}%` }} />
+            <div
+              className="h-full bg-emerald-500"
+              style={{ width: `${(overall ?? 0) * 100}%` }}
+            />
           </div>
         </div>
         <div className="flex flex-col gap-1 p-2">
@@ -307,8 +317,19 @@ export default function Follow() {
           >
             {copy.markAll}
           </Btn>
-          <Btn onClick={() => a.resetMaking()}>{copy.reset}</Btn>
           <Btn
+            onClick={() => {
+              a.resetMaking()
+              // 本地焦点和上次落点也要跟着清，否则重置后还停在上个色号上
+              setFocusCode(null)
+              setLastPoint(null)
+            }}
+            disabled={overall === null}
+          >
+            {copy.reset}
+          </Btn>
+          <Btn
+            disabled={overall === null}
             onClick={() => {
               const el = wrapRef.current?.parentElement
               if (!document.fullscreenElement) void el?.requestFullscreen?.()
@@ -332,20 +353,26 @@ export default function Follow() {
             className="absolute left-0 top-0 touch-none"
             onPointerDown={(e) => {
               const rect = e.currentTarget.getBoundingClientRect()
-              panRef.current = { x: e.clientX, y: e.clientY }
+              downRef.current = { x: e.clientX, y: e.clientY }
               const cell = screenToCell(vp, e.clientX - rect.left, e.clientY - rect.top)
               if (focusCode && e.button === 0) {
                 const region = findRegionAt(regions, cell.row * grid.cols + cell.col)
                 if (region) {
                   a.toggleRegion(focusCode, region.id)
                   setLastPoint({ col: cell.col, row: cell.row })
-                  return
+                  // 点到区域 = 标记完成，不进入平移；轻微手抖也不会把视口挪走
+                  downRef.current = null
                 }
               }
-              void rect
             }}
             onPointerMove={(e) => {
-              if (!panRef.current) return
+              const down = downRef.current
+              if (!down) return
+              if (!panRef.current) {
+                if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < DRAG_THRESHOLD_PX) return
+                panRef.current = { x: e.clientX, y: e.clientY }
+                return
+              }
               const dx = e.clientX - panRef.current.x
               const dy = e.clientY - panRef.current.y
               panRef.current = { x: e.clientX, y: e.clientY }
@@ -354,6 +381,7 @@ export default function Follow() {
               )
             }}
             onPointerUp={() => {
+              downRef.current = null
               panRef.current = null
             }}
             onContextMenu={(e) => e.preventDefault()}
@@ -362,23 +390,4 @@ export default function Follow() {
       </div>
     </div>
   )
-}
-
-/** 把视口对到某个区域上（推荐下一个区域时用） */
-function fitViewportToRegion(
-  current: Viewport,
-  bbox: { c0: number; r0: number; c1: number; r1: number },
-  width: number,
-  height: number,
-): Viewport {
-  if (!width || !height) return current
-  const spanCols = Math.max(8, bbox.c1 - bbox.c0 + 25)
-  const spanRows = Math.max(8, bbox.r1 - bbox.r0 + 25)
-  const zoom = Math.max(current.zoom, Math.min(width / spanCols, height / spanRows))
-  return {
-    ...current,
-    zoom,
-    panX: width / 2 - ((bbox.c0 + bbox.c1) / 2) * zoom,
-    panY: height / 2 - ((bbox.r0 + bbox.r1) / 2) * zoom,
-  }
 }

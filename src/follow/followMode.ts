@@ -39,10 +39,13 @@ export function findAllRegions(grid: CellGrid): AllRegions {
   const component: number[] = []
   const stack: number[] = []
   let count = 0
+  // 空档不是可以拼的地方：既不能起区域，也不能从里面穿过去
+  const placeable = grid.placeable
+  const open = (i: number) => !placeable || placeable[i] === 1
 
   for (let start = 0; start < cells.length; start++) {
     const colorIndex = cells[start]
-    if (visited[start] || colorIndex === EMPTY) continue
+    if (visited[start] || colorIndex === EMPTY || !open(start)) continue
     component.length = 0
     stack.length = 0
     stack.push(start)
@@ -63,19 +66,19 @@ export function findAllRegions(grid: CellGrid): AllRegions {
       if (y < minY) minY = y
       if (y > maxY) maxY = y
       if (x === 0 || y === 0 || x === cols - 1 || y === rows - 1) touchesEdge = true
-      if (x > 0 && !visited[i - 1] && cells[i - 1] === colorIndex) {
+      if (x > 0 && !visited[i - 1] && cells[i - 1] === colorIndex && open(i - 1)) {
         visited[i - 1] = 1
         stack.push(i - 1)
       }
-      if (x + 1 < cols && !visited[i + 1] && cells[i + 1] === colorIndex) {
+      if (x + 1 < cols && !visited[i + 1] && cells[i + 1] === colorIndex && open(i + 1)) {
         visited[i + 1] = 1
         stack.push(i + 1)
       }
-      if (y > 0 && !visited[i - cols] && cells[i - cols] === colorIndex) {
+      if (y > 0 && !visited[i - cols] && cells[i - cols] === colorIndex && open(i - cols)) {
         visited[i - cols] = 1
         stack.push(i - cols)
       }
-      if (y + 1 < rows && !visited[i + cols] && cells[i + cols] === colorIndex) {
+      if (y + 1 < rows && !visited[i + cols] && cells[i + cols] === colorIndex && open(i + cols)) {
         visited[i + cols] = 1
         stack.push(i + cols)
       }
@@ -190,7 +193,8 @@ export function progressOf(regions: Region[], completed: Set<number>): FollowPro
     done,
     regionsLeft: regions.length - regionsDone,
     regionsTotal: regions.length,
-    ratio: total === 0 ? 1 : done / total,
+    // 没有内容就是 0%，不能算"已完成"；空作品的 100% 会让用户以为拼完了
+    ratio: total === 0 ? 0 : done / total,
   }
 }
 
