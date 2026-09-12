@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { unzlibSync, zlibSync } from 'fflate'
 
+import { getPalette } from '../data/palettes'
 import { deriveGeometry, deriveLayoutGeometry, type BoardArray } from './board'
 import { EMPTY, createGrid, gridEquals } from './grid'
-import { createProject, parseProject, projectSummary, serializeProject } from './project'
+import {
+  createProject,
+  parseProject,
+  projectSummary,
+  serializeProject,
+  validateProject,
+} from './project'
 
 function sampleProject(index = 0) {
   const boardArray: BoardArray = { rows: [['mini52']], gapMm: 0 }
@@ -161,7 +169,135 @@ describe('工程序列化', () => {
     expect(parseProject('[]').error?.kind).toBe('fatal')
     expect(parseProject('null').error?.kind).toBe('fatal')
   })
+
+  it('不认识色板时不静默回退：换到默认色板并明确告知', () => {
+    const parsed = JSON.parse(serializeProject(sampleProject()))
+    parsed.paletteId = 'no-such-palette'
+    const result = parseProject(JSON.stringify(parsed))
+    expect(result.project).not.toBeNull()
+    expect(result.project!.paletteId).toBe('mard-291')
+    expect(result.error?.kind).toBe('recovered')
+    expect(result.error?.message).toContain('找不到色板')
+  })
+
+  it('不写色板大小也能自己查出色板并校验色号', () => {
+    const project = sampleProject()
+    project.grid.cells[0] = 5000
+    const result = parseProject(serializeProject(project))
+    expect(result.project).toBeNull()
+    expect(result.error?.message).toContain('不存在的色号')
+  })
+
+  it('画布尺寸必须是正整数（小数 / 0 / 负数都拒绝）', () => {
+    for (const size of [0, -52, 52.5]) {
+      const parsed = JSON.parse(serializeProject(sampleProject()))
+      parsed.grid.cols = size
+      const result = parseProject(JSON.stringify(parsed))
+      expect(result.project).toBeNull()
+      expect(result.error?.message).toMatch(/正整数|长度不对|对不上/)
+    }
+  })
+
+  it('不支持的格子编码直接拒绝', () => {
+    const parsed = JSON.parse(serializeProject(sampleProject()))
+    parsed.grid.encoding = 'raw-binary'
+    const result = parseProject(JSON.stringify(parsed))
+    expect(result.project).toBeNull()
+    expect(result.error?.message).toContain('不支持的格子编码')
+  })
+
+  it('未知板型报结构化错误，不是 TypeError', () => {
+    const parsed = JSON.parse(serializeProject(sampleProject()))
+    parsed.layout = { placements: [{ board: 'mini99', col: 0, row: 0 }], gapMm: 0 }
+    const result = parseProject(JSON.stringify(parsed))
+    expect(result.project).toBeNull()
+    expect(result.error?.message).toContain('不认识这个板型')
+  })
+
+  it('视图 / 跟做进度 / 白名单坏数据就地修好并告知', () => {
+    const firstCode = getPalette('mard-291').colors[0].code
+    const parsed = JSON.parse(serializeProject(sampleProject()))
+    parsed.view = { zoom: -3, panX: 'x', panY: null, showCodes: 'yes' }
+    parsed.making = { completedCodes: 'nope', completedRegions: 5, focusCode: 7 }
+    parsed.allowedCodes = [firstCode, '不存在的色号']
+    const result = parseProject(JSON.stringify(parsed))
+    expect(result.project).not.toBeNull()
+    expect(result.error?.kind).toBe('recovered')
+    expect(result.project!.view.zoom).toBe(8)
+    expect(result.project!.view.showCodes).toBe(true)
+    expect(result.project!.making.completedCodes).toEqual([])
+    expect(result.project!.making.focusCode).toBeNull()
+    expect(result.project!.allowedCodes).toEqual([firstCode])
+  })
+
+  it('板外空档里的脏数据会清掉，并且明确告知清了几格', () => {
+    const project = sampleProject()
+    project.layout = {
+      placements: [
+        { board: 'mini104', col: 0, row: 0 },
+        { board: 'mini52', col: 104, row: 0 },
+      ],
+      gapMm: 0,
+    }
+    const geometry = deriveLayoutGeometry(project.layout)
+    project.grid = createGrid(geometry.cols, geometry.rows, EMPTY, geometry.placeable)
+    // 序列化会顺手清干净，所以直接改压缩数据造一份“坏文件”
+    const hole = 60 * geometry.cols + 120
+    const result = parseProject(patchCell(serializeProject(project), hole, 8))
+    expect(result.error?.kind).toBe('recovered')
+    expect(result.error?.message).toContain('空档')
+    expect(result.project!.grid.cells[hole]).toBe(EMPTY)
+  })
+
+  it('空档里的脏数据不会拉高豆数与色数', () => {
+    const project = sampleProject()
+    project.layout = {
+      placements: [
+        { board: 'mini104', col: 0, row: 0 },
+        { board: 'mini52', col: 104, row: 0 },
+      ],
+      gapMm: 0,
+    }
+    const geometry = deriveLayoutGeometry(project.layout)
+    project.grid = createGrid(geometry.cols, geometry.rows, EMPTY, geometry.placeable)
+    project.grid.cells[0] = 3
+    const parsed = parseProject(patchCell(serializeProject(project), 60 * geometry.cols + 120, 8))
+    expect(parsed.project!.grid.cells[0]).toBe(3)
+    expect(projectSummary(parsed.project!).beads).toBe(1)
+  })
+
+  it('IndexedDB 形状（未压缩的 Uint16Array）走同一套校验', () => {
+    const project = sampleProject()
+    expect(validateProject(project)?.project).not.toBeNull()
+    const result = validateProject(project)!
+    expect(result.error).toBeNull()
+    expect(gridEquals(result.project!.grid, project.grid)).toBe(true)
+  })
+
+  it('IndexedDB 形状的坏数据也会被拦住', () => {
+    const project = sampleProject()
+    expect(validateProject({ ...project, grid: { cols: 0, rows: 0, cells: new Uint16Array(0) } })).toMatchObject({
+      project: null,
+    })
+    expect(validateProject({ ...project, grid: { cols: 52, rows: 52, cells: 'x' } }).error?.kind).toBe(
+      'fatal',
+    )
+  })
 })
+
+/** 往导出的工程文件里手工改一格：用来造“空档里有脏数据”的坏文件 */
+function patchCell(text: string, index: number, value: number): string {
+  const parsed = JSON.parse(text) as { grid: { data: string } }
+  const raw = Uint8Array.from(atob(parsed.grid.data), (ch) => ch.charCodeAt(0))
+  const cells = new Uint16Array(unzlibSync(raw).buffer)
+  cells[index] = value
+  let out = ''
+  for (const byte of zlibSync(new Uint8Array(cells.buffer), { level: 6 })) {
+    out += String.fromCharCode(byte)
+  }
+  parsed.grid.data = btoa(out)
+  return JSON.stringify(parsed)
+}
 
 describe('工程摘要', () => {
   it('算出豆数、色数、板数和成品尺寸', () => {
@@ -186,5 +322,35 @@ describe('工程摘要', () => {
     })
     expect(projectSummary(project).beads).toBe(1)
     expect(project.grid.cells.filter((v) => v === EMPTY)).toHaveLength(15)
+  })
+
+  it('板外空档里的脏数据不算豆、不算色', () => {
+    const project = sampleProject()
+    project.layout = {
+      placements: [
+        { board: 'mini104', col: 0, row: 0 },
+        { board: 'mini52', col: 104, row: 0 },
+      ],
+      gapMm: 0,
+    }
+    const geometry = deriveLayoutGeometry(project.layout)
+    project.grid = createGrid(geometry.cols, geometry.rows, EMPTY, geometry.placeable)
+    project.grid.cells[0] = 3
+    project.grid.cells[60 * geometry.cols + 120] = 8
+    const summary = projectSummary(project)
+    expect(summary.beads).toBe(1)
+    expect(summary.colorCount).toBe(1)
+  })
+
+  it('gapMm 进入成品尺寸', () => {
+    const project = sampleProject()
+    project.layout = {
+      placements: [
+        { board: 'mini52', col: 0, row: 0 },
+        { board: 'mini52', col: 52, row: 0 },
+      ],
+      gapMm: 1.5,
+    }
+    expect(projectSummary(project).sizeMm.w).toBeCloseTo(104 * 2.6 + 1.5, 6)
   })
 })

@@ -5,10 +5,10 @@ import { deriveGeometry } from '../domain/board'
 import type { Palette } from '../domain/palette'
 import { PT_PER_MM } from '../domain/geometry'
 import { countStreamOps, createPdfSink, pdfRgb } from './pdf'
-import { renderScreenPdf } from './documentScreen'
+import { renderScreenPdf, drawCells } from './documentScreen'
 import { buildBom } from './bom'
 import { BOARD_SEAM } from './documentScreen'
-import { screenLayout } from './documentLayout'
+import { screenLayout, SCREEN_PAD_PT } from './documentLayout'
 
 /** 4 行 4 列，每行一个颜色，色号就是行号 —— 验收要求的"每格写上自己的行号" */
 const ROW_PALETTE: Palette = {
@@ -73,7 +73,7 @@ function cellTexts(
   texts: ParsedText[],
   rows: number,
   pitchMm: number,
-  origin = 8,
+  origin = SCREEN_PAD_PT,
 ): ParsedText[] {
   const P = pitchMm * PT_PER_MM
   return texts.filter((item) => {
@@ -84,6 +84,33 @@ function cellTexts(
     const row = Math.floor((origin + rows * P - centerY) / P)
     return col >= 0 && col < rows && row >= 0 && row < rows
   })
+}
+
+/**
+ * 找出跑到页面外面的绘制操作。屏幕版的页面 = 图案 + 四周留白，
+ * 坐标数字、网格线、板框都得在页面里，否则打印/看的时候就被裁了。
+ */
+function opsOutsidePage(stream: string, pageW: number, pageH: number): string[] {
+  const bad: string[] = []
+  const eps = 0.01
+  const check = (label: string, x: number, y: number, w = 0, h = 0) => {
+    if (x < -eps || y < -eps || x + w > pageW + eps || y + h > pageH + eps) {
+      bad.push(`${label} ${x},${y} ${w}x${h}`)
+    }
+  }
+  for (const m of stream.matchAll(/([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) re/g)) {
+    check('re', Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]))
+  }
+  for (const m of stream.matchAll(/([\d.-]+) ([\d.-]+) [ml]/g)) {
+    check('line', Number(m[1]), Number(m[2]))
+  }
+  for (const m of stream.matchAll(/1 0 0 1 ([\d.-]+) ([\d.-]+) Tm/g)) {
+    check('tm', Number(m[1]), Number(m[2]))
+  }
+  for (const m of stream.matchAll(/([\d.-]+) ([\d.-]+) Td/g)) {
+    check('td', Number(m[1]), Number(m[2]))
+  }
+  return bad
 }
 
 function render(options: {
@@ -124,11 +151,12 @@ function render(options: {
 }
 
 describe('屏幕版矢量 PDF', () => {
-  it('页面尺寸 = 豆数 × 针距（毫米）', () => {
+  it('页面尺寸 = 豆数 × 针距 + 四周留白（右侧和上方不会被裁）', () => {
     const { sink, result } = render({})
-    expect(sink.pageWidth / PT_PER_MM).toBeCloseTo(20, 3)
-    expect(result.widthPt / PT_PER_MM).toBeCloseTo(20, 3)
-    expect(result.heightPt / PT_PER_MM).toBeCloseTo(20, 3)
+    const padMm = (SCREEN_PAD_PT * 2) / PT_PER_MM
+    expect(sink.pageWidth / PT_PER_MM).toBeCloseTo(20 + padMm, 3)
+    expect(result.widthPt / PT_PER_MM).toBeCloseTo(20 + padMm, 3)
+    expect(result.heightPt / PT_PER_MM).toBeCloseTo(20 + padMm, 3)
     expect(sink.contentStream(0).length).toBeGreaterThan(0)
   })
 
@@ -167,7 +195,7 @@ describe('屏幕版矢量 PDF', () => {
   it('文字对齐：每个色号落在自己的格子里（±1px）', () => {
     const { sink, grid, pitchMm } = render({})
     const P = pitchMm * PT_PER_MM
-    const origin = 8
+    const origin = SCREEN_PAD_PT
     const texts = cellTexts(parseTextObjects(sink.contentStream(0)), 4, pitchMm)
     expect(texts).toHaveLength(16)
     for (const item of texts) {
@@ -211,7 +239,7 @@ describe('屏幕版矢量 PDF', () => {
   it('基线在格心下方半个字高（两轴居中的公式）', () => {
     const { sink, pitchMm } = render({})
     const P = pitchMm * PT_PER_MM
-    const origin = 8
+    const origin = SCREEN_PAD_PT
     const texts = cellTexts(parseTextObjects(sink.contentStream(0)), 4, pitchMm)
     const first = texts.find((t) => t.text === '0')!
     const fontSize = Math.min(P * 0.45, P * 1.6)
@@ -238,6 +266,7 @@ describe('屏幕版矢量 PDF', () => {
         seamCols: [2],
         seamRows: [2],
         boards: [],
+        gapMm: 0,
         placeable: new Uint8Array(16).fill(1),
       },
       pitchMm,
@@ -317,6 +346,49 @@ describe('屏幕版矢量 PDF', () => {
     })
     expect(result.pageCount).toBe(layout.sheets.length)
     expect(sink.pageCount()).toBe(layout.sheets.length)
+  })
+
+  it('没有一处绘制跑出页面边界（右侧/上侧的图案和数字都不会被裁）', () => {
+    const { sink } = render({ bom: false })
+    expect(opsOutsidePage(sink.contentStream(0), sink.pageWidth, sink.pageHeight)).toEqual([])
+  })
+
+  it('分页时每一页都同样不越界', () => {
+    const cols = 2236
+    const grid = createGrid(cols, cols, 0)
+    const layout = screenLayout(grid, 2.6, { showCodes: false, includeBom: false })
+    const sink = createPdfSink({
+      widthPt: layout.pageMm.w * PT_PER_MM,
+      heightPt: layout.pageMm.h * PT_PER_MM,
+    })
+    renderScreenPdf(sink, {
+      grid,
+      palette: ROW_PALETTE,
+      geom: deriveGeometry({ rows: [['mini104']], gapMm: 0 }),
+      pitchMm: 2.6,
+      pitchLabel: 2.6,
+      showCodes: true,
+      includeBom: false,
+    })
+    for (let page = 0; page < sink.pageCount(); page++) {
+      expect(opsOutsidePage(sink.contentStream(page), sink.pageWidth, sink.pageHeight)).toEqual([])
+    }
+  })
+
+  it('空档（没板的地方）不画豆子，也不会被行程合并带过去', () => {
+    // 4 格同色，中间第 3 格下面没板
+    const grid = createGrid(4, 1, 0)
+    grid.placeable = new Uint8Array([1, 1, 0, 1])
+    const sink = createPdfSink({ widthPt: 4 * 5 * PT_PER_MM, heightPt: 5 * PT_PER_MM })
+    const stats = drawCells(
+      sink,
+      grid,
+      ROW_PALETTE,
+      { col0: 0, row0: 0, cols: 4, rows: 1 },
+      { x: SCREEN_PAD_PT, y: SCREEN_PAD_PT },
+      5 * PT_PER_MM,
+    )
+    expect(stats.rects).toBe(2) // 左边 2 格 + 右边 1 格，不能合成一条
   })
 
   it('输出是真 PDF 字节（%PDF 头 + EOF 尾）', () => {

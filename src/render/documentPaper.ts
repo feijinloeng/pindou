@@ -73,6 +73,8 @@ export function renderPaperPdf(sink: PdfSink, options: PaperPdfOptions): PaperPd
   })
   const P = options.pitchMm * PT_PER_MM
   const margin = layout.marginMm * PT_PER_MM
+  // 本次导出的范围（只导出选中的板时，"是不是第一页"不能看全局坐标）
+  const scope = exportScope(grid, options.boards)
   const plan = planAnnotations(grid, palette, options.pitchMm, {
     enabled: layout.drawCodes,
   })
@@ -86,6 +88,7 @@ export function renderPaperPdf(sink: PdfSink, options: PaperPdfOptions): PaperPd
       ...options,
       layout,
       plan,
+      scope,
       sheet,
       index,
       P,
@@ -115,10 +118,31 @@ export function renderPaperPdf(sink: PdfSink, options: PaperPdfOptions): PaperPd
 interface SheetDrawContext extends PaperPdfOptions {
   layout: DocumentLayout
   plan: ReturnType<typeof planAnnotations>
+  /** 本次导出覆盖的范围（全局坐标）。按板导出时就是那一块板 */
+  scope: { col0: number; row0: number; col1: number; row1: number }
   sheet: SheetRange
   index: number
   P: number
   margin: number
+}
+
+/** 本次导出的范围：选了几块板就是这几块板的外接框，否则整张图 */
+function exportScope(
+  grid: CellGrid,
+  boards?: BoardGeometry['boards'],
+): { col0: number; row0: number; col1: number; row1: number } {
+  if (!boards?.length) return { col0: 0, row0: 0, col1: grid.cols, row1: grid.rows }
+  let col0 = Number.POSITIVE_INFINITY
+  let row0 = Number.POSITIVE_INFINITY
+  let col1 = 0
+  let row1 = 0
+  for (const board of boards) {
+    col0 = Math.min(col0, board.c0)
+    row0 = Math.min(row0, board.r0)
+    col1 = Math.max(col1, board.c0 + board.cw)
+    row1 = Math.max(row1, board.r0 + board.rh)
+  }
+  return { col0, row0, col1, row1 }
 }
 
 function drawSheet(sink: PdfSink, ctx: SheetDrawContext): void {
@@ -127,9 +151,11 @@ function drawSheet(sink: PdfSink, ctx: SheetDrawContext): void {
   //    也就是第 0 行贴着上边距，剩下的空边留在下方。锚在下方会把图案挪到纸的下半张。
   const origin = { x: margin, y: A4_PT.h - margin - sheet.rows * P }
   const total = ctx.layout.sheets.length
+  // 页序按【本次导出范围】算：第二块板的第一张纸不该有重叠带和裁切线
+  const firstInScope = sheet.col0 === ctx.scope.col0 && sheet.row0 === ctx.scope.row0
 
-  // 重叠带底色（浅蓝 30%）——第 2 页起才有
-  if (sheet.col0 > 0 && ctx.layout.overlap > 0) {
+  // 重叠带底色（浅蓝 30%）——不是本范围的第一页才有
+  if (!firstInScope && ctx.layout.overlap > 0) {
     sink.opacity(0.3)
     sink.fillColor(OVERLAP_TINT)
     sink.rect(origin.x, origin.y, ctx.layout.overlap * P, sheet.rows * P)
@@ -170,8 +196,8 @@ function drawSheet(sink: PdfSink, ctx: SheetDrawContext): void {
   // 页脚校准尺 + 20 豆校验条
   if (ctx.layout.drawRuler) drawRuler(sink, ctx, origin)
 
-  // 裁切线 + 对位十字
-  if (sheet.col0 > 0) drawCropLineAndMarks(sink, ctx, origin)
+  // 裁切线 + 对位十字：只有"这不是本次范围的第一页"才需要
+  if (!firstInScope) drawCropLineAndMarks(sink, ctx, origin)
 }
 
 /** 页缝：只在"右边还有内容"或"下边还有内容"的那条边上画蓝色虚线 */
@@ -180,9 +206,9 @@ function strokeSheetSeams(
   ctx: SheetDrawContext,
   origin: { x: number; y: number },
 ): void {
-  const { sheet, P, grid } = ctx
-  const moreToRight = sheet.col0 + sheet.cols < grid.cols
-  const moreBelow = sheet.row0 + sheet.rows < grid.rows
+  const { sheet, P } = ctx
+  const moreToRight = sheet.col0 + sheet.cols < ctx.scope.col1
+  const moreBelow = sheet.row0 + sheet.rows < ctx.scope.row1
   sink.strokeColor(SHEET_SEAM.rgb)
   sink.lineWidth(SHEET_SEAM.widthPt)
   sink.dash([4, 3])
@@ -203,7 +229,7 @@ function drawHeader(sink: PdfSink, ctx: SheetDrawContext, total: number): void {
   const board = findBoard(ctx.geom, sheet)
   // 页眉只印拉丁字符（第 11.4 节：v1 全程避开中文，保住矢量性）
   const header = board
-    ? `Board r${board.row + 1}c${board.col + 1} ${board.board} | Page ${ctx.index + 1}/${total} | cols ${sheet.col0}-${sheet.col0 + sheet.cols - 1} rows ${sheet.row0}-${sheet.row0 + sheet.rows - 1}`
+    ? `Board ${board.index + 1} ${board.board} | Page ${ctx.index + 1}/${total} | cols ${sheet.col0}-${sheet.col0 + sheet.cols - 1} rows ${sheet.row0}-${sheet.row0 + sheet.rows - 1}`
     : `Page ${ctx.index + 1}/${total} | cols ${sheet.col0}-${sheet.col0 + sheet.cols - 1} rows ${sheet.row0}-${sheet.row0 + sheet.rows - 1}`
   sink.fillColor([0, 0, 0])
   sink.text(header, ctx.margin, A4_PT.h - 6, 7, 'fill')
@@ -227,7 +253,7 @@ function drawBoardLabels(sink: PdfSink, ctx: SheetDrawContext, origin: { x: numb
     if (localCol < 0 || localRow < 0) continue
     if (localCol >= sheet.cols || localRow >= sheet.rows) continue
     sink.text(
-      `r${board.row + 1}c${board.col + 1}`,
+      `Board ${board.index + 1}`,
       origin.x + localCol * P + 1.5,
       origin.y + (sheet.rows - localRow) * P - 5,
       4.5,

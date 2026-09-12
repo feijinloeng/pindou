@@ -2,8 +2,9 @@ import { EMPTY } from '../domain/grid'
 import { analyzeSource, type SourceAnalysis } from './analyze'
 import {
   findSubjectBox,
+  MIN_BG_CONFIDENCE,
   removeBackground,
-  sampleCornerColor,
+  sampleBackground,
   shouldCrop,
   BG_THRESHOLD,
 } from './background'
@@ -13,11 +14,12 @@ import { cropRect, downscale, fitToAspect, type FitMode } from './downscale'
 import { limitColors, nearestRemap } from './limitColors'
 import { createMatcher, matchWithDither } from './match'
 import { bilateralFilter, luminanceOf, neutralBias } from './preprocess'
-import { resolveDither, STRATEGIES, type StrategyId } from './strategies'
+import { resolveDither, resolveStrategy, type StrategyChoice, type StrategyId } from './strategies'
 import type { SourceImage } from './types'
 
 export interface ConversionSettings {
-  strategyId: StrategyId
+  /** auto = 按内容分析自动选；其它值是手动指定 */
+  strategyId: StrategyChoice
   /** 目标色数，0 = 不限制 */
   maxColors: number
   /** null = 用策略默认 */
@@ -29,7 +31,7 @@ export interface ConversionSettings {
 }
 
 export const DEFAULT_SETTINGS: ConversionSettings = {
-  strategyId: 'general',
+  strategyId: 'auto',
   maxColors: 24,
   dither: null,
   cropToSubject: true,
@@ -55,6 +57,14 @@ export interface ConvertInput {
 export interface ConvertResult {
   cells: Uint16Array
   analysis: SourceAnalysis
+  /** 真正干活的那个策略（strategyId=auto 时由分析结果决定） */
+  strategyUsed: StrategyId
+  /** 真正生效的抖动强度 */
+  ditherUsed: number
+  /** 采样到的背景色置信度；低 = 背景判断不可靠 */
+  backgroundConfidence: number
+  /** 因为背景色不可靠而跳过了自动裁切 */
+  cropSkipped: boolean
   /** 真正用到的色板索引 */
   usedIndexes: number[]
   /** 被限色调掉的索引（UI 提示用） */
@@ -82,26 +92,37 @@ export const STAGE_LABELS = [
  */
 export function convert(input: ConvertInput): ConvertResult {
   const { cols, rows, paletteColors, settings } = input
-  const strategy = STRATEGIES[settings.strategyId] ?? STRATEGIES.general
   const report = input.onProgress ?? (() => {})
 
   report('分析内容', 0)
   const analysis = analyzeSource(input.image)
+  // 分析结果真的参与决策：strategyId=auto 时靠它选档，不再只是展示结论
+  const strategy = resolveStrategy(settings.strategyId, analysis.kind)
+  const ditherUsed = resolveDither(strategy.id, settings.dither)
 
   report('裁到主体', 0.1)
   let image = input.image
   let backgroundRgb: Rgb | null = null
+  let backgroundConfidence = 0
   let cropped = false
+  let cropSkipped = false
   if (settings.cropToSubject || settings.removeBackground) {
-    backgroundRgb = sampleCornerColor(image)
+    const sample = sampleBackground(image)
+    backgroundRgb = sample.rgb
+    backgroundConfidence = sample.confidence
   }
   if (settings.cropToSubject && backgroundRgb) {
-    const box = findSubjectBox(image, backgroundRgb, BG_THRESHOLD)
-    if (box && shouldCrop(box, image.width, image.height)) {
-      const w = box.x1 - box.x0 + 1
-      const h = box.y1 - box.y0 + 1
-      image = { width: w, height: h, data: cropRect(image, box.x0, box.y0, w, h) }
-      cropped = true
+    // 背景不可靠时不自动裁：宁可什么都不做，也不要默默把主体切掉
+    if (backgroundConfidence < MIN_BG_CONFIDENCE) {
+      cropSkipped = true
+    } else {
+      const box = findSubjectBox(image, backgroundRgb, BG_THRESHOLD)
+      if (box && shouldCrop(box, image.width, image.height)) {
+        const w = box.x1 - box.x0 + 1
+        const h = box.y1 - box.y0 + 1
+        image = { width: w, height: h, data: cropRect(image, box.x0, box.y0, w, h) }
+        cropped = true
+      }
     }
   }
 
@@ -116,8 +137,7 @@ export function convert(input: ConvertInput): ConvertResult {
 
   report('色差匹配', 0.55)
   const matcher = createMatcher(paletteColors, input.allowed)
-  const dither = resolveDither(settings.strategyId, settings.dither)
-  const cells = matchWithDither(rgbData, cols, rows, matcher, dither)
+  const cells = matchWithDither(rgbData, cols, rows, matcher, ditherUsed)
 
   report('限制色数', 0.7)
   let droppedIndexes: number[] = []
@@ -175,6 +195,10 @@ export function convert(input: ConvertInput): ConvertResult {
   return {
     cells,
     analysis,
+    strategyUsed: strategy.id,
+    ditherUsed,
+    backgroundConfidence,
+    cropSkipped,
     usedIndexes: [...used].sort((a, b) => a - b),
     droppedIndexes,
     backgroundRgb,

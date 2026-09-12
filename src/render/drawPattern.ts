@@ -4,12 +4,8 @@ import { CODE_ZOOM, GRID_ZOOM, type Viewport, visibleRange } from './canvasViewp
 import { BITMAP_THRESHOLD, type GridBitmap } from './gridBitmap'
 import type { Selection } from '../editor/selection'
 
-export const HOLE_BG = '#c9c9cf'
-export const BOARD_BG = '#FAFAF8'
-export const STAGE_BG = '#EFEFEC'
-export const SEAM_COLOR = '#D22B2B'
-export const SELECTION_COLOR = '#1B6DE0'
-export const CURSOR_COLOR = '#111111'
+export { BOARD_BG, CURSOR_COLOR, HOLE_BG, SEAM_COLOR, SELECTION_COLOR, STAGE_BG } from './colors'
+import { BOARD_BG, CURSOR_COLOR, HOLE_BG, SEAM_COLOR, SELECTION_COLOR, STAGE_BG } from './colors'
 
 export interface DrawPatternOptions {
   grid: CellGrid

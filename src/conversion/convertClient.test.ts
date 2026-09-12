@@ -26,6 +26,11 @@ class FakeWorker extends EventTarget {
   emit(message: ConvertResponse): void {
     this.dispatchEvent(new MessageEvent('message', { data: message }))
   }
+
+  /** Worker 自己崩了（模块加载失败、OOM、被浏览器杀掉） */
+  crash(type: 'error' | 'messageerror'): void {
+    this.dispatchEvent(new Event(type))
+  }
 }
 
 const image: SourceImage = {
@@ -56,6 +61,31 @@ describe('转换 Worker 客户端', () => {
     vi.unstubAllGlobals()
   })
 
+  it('保留底图时把 existing 交给 Worker', async () => {
+    const client = await import('./convertClient')
+    const existing = new Uint16Array([7])
+    const pending = client.runConvert({ ...makeJob(), existing })
+    const worker = FakeWorker.instances[0]
+    const request = worker.posted[0] as { id: number; existing?: Uint16Array }
+    expect(Array.from(request.existing ?? [])).toEqual([7])
+    worker.emit({
+      id: request.id,
+      kind: 'done',
+      cells: new Uint16Array([7]),
+      usedIndexes: [7],
+      droppedIndexes: [],
+      kindOfSource: 'photo',
+      strategyUsed: 'general',
+      ditherUsed: 0.55,
+      backgroundConfidence: 1,
+      cropSkipped: false,
+      quantizedColorCount: 1,
+      cropped: false,
+      ms: 1,
+    })
+    await expect(pending).resolves.toMatchObject({ usedIndexes: [7] })
+  })
+
   it('取消时会结束 Promise 并终止旧 Worker', async () => {
     const client = await import('./convertClient')
     const controller = new AbortController()
@@ -84,6 +114,10 @@ describe('转换 Worker 客户端', () => {
       usedIndexes: [0],
       droppedIndexes: [],
       kindOfSource: 'photo',
+      strategyUsed: 'general',
+      ditherUsed: 0.55,
+      backgroundConfidence: 1,
+      cropSkipped: false,
       quantizedColorCount: 1,
       cropped: false,
       ms: 1,
@@ -91,5 +125,58 @@ describe('转换 Worker 客户端', () => {
 
     await expect(nextPending).resolves.toMatchObject({ usedIndexes: [0], ms: 1 })
     expect(nextWorker.terminated).toBe(false)
+  })
+
+  it('Worker 崩了：Promise 一定会结束，不会永远停在“转换中”（P2-11）', async () => {
+    const client = await import('./convertClient')
+    const pending = client.runConvert(makeJob())
+    FakeWorker.instances[0].crash('error')
+    await expect(pending).rejects.toThrow(/Worker 出错/)
+    expect(FakeWorker.instances[0].terminated).toBe(true)
+  })
+
+  it('结果读不出来（messageerror）也会结束 Promise', async () => {
+    const client = await import('./convertClient')
+    const pending = client.runConvert(makeJob())
+    FakeWorker.instances[0].crash('messageerror')
+    await expect(pending).rejects.toThrow(/无法读取/)
+  })
+
+  it('崩溃后重建：下一次转换用新 Worker 并正常返回', async () => {
+    const client = await import('./convertClient')
+    const first = client.runConvert(makeJob())
+    FakeWorker.instances[0].crash('error')
+    await expect(first).rejects.toThrow()
+
+    const second = client.runConvert(makeJob())
+    expect(FakeWorker.instances).toHaveLength(2)
+    const worker = FakeWorker.instances[1]
+    const request = worker.posted[0] as { id: number }
+    worker.emit({
+      id: request.id,
+      kind: 'done',
+      cells: new Uint16Array([0]),
+      usedIndexes: [0],
+      droppedIndexes: [],
+      kindOfSource: 'photo',
+      strategyUsed: 'general',
+      ditherUsed: 0,
+      backgroundConfidence: 1,
+      cropSkipped: false,
+      quantizedColorCount: 1,
+      cropped: false,
+      ms: 2,
+    })
+    await expect(second).resolves.toMatchObject({ usedIndexes: [0], ms: 2 })
+  })
+
+  it('Worker 内部报错时把消息透出来，面板能显示可重试的原因', async () => {
+    const client = await import('./convertClient')
+    const pending = client.runConvert(makeJob())
+    const worker = FakeWorker.instances[0]
+    const request = worker.posted[0] as { id: number }
+    worker.emit({ id: request.id, kind: 'error', message: '内存不够' })
+    await expect(pending).rejects.toThrow('内存不够')
+    expect(worker.terminated).toBe(false)
   })
 })

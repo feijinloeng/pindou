@@ -4,7 +4,64 @@ import type { SourceImage } from './types'
 
 export const BG_THRESHOLD = 26
 
-/** 取四角各 ratio 的区域，求 RGB 中位数作为背景色 */
+/** 边界采样里与中位色一致的占比低于这个值，就当“没有可靠背景” */
+export const MIN_BG_CONFIDENCE = 0.6
+
+/**
+ * 背景采样结果。
+ * confidence = 采样像素中有多少落在中位色附近。低置信度意味着四边不是同一种底色
+ * （渐变、花纹、主体压到边上），这时自动裁切很可能把主体裁掉。
+ */
+export interface BackgroundSample {
+  rgb: Rgb
+  confidence: number
+}
+
+/**
+ * 从四条边（不只是四个角）各取一条窄带，求 RGB 中位数作为背景色。
+ *
+ * 比只看四角稳得多：主体压在角落里时四角中位数会被主体带偏，
+ * 而一整条边线上背景仍然占多数，中位数还是背景色。
+ */
+export function sampleBackground(image: SourceImage, bandRatio = 0.02): BackgroundSample {
+  const { width, height, data } = image
+  const bw = Math.max(1, Math.round(width * bandRatio))
+  const bh = Math.max(1, Math.round(height * bandRatio))
+  const samples: number[][] = [[], [], []]
+  const collect = (x: number, y: number) => {
+    const i = (y * width + x) * 4
+    samples[0].push(data[i])
+    samples[1].push(data[i + 1])
+    samples[2].push(data[i + 2])
+  }
+  for (let y = 0; y < bh; y++) {
+    for (let x = 0; x < width; x++) {
+      collect(x, y)
+      collect(x, height - 1 - y)
+    }
+  }
+  for (let x = 0; x < bw; x++) {
+    for (let y = bh; y < height - bh; y++) {
+      collect(x, y)
+      collect(width - 1 - x, y)
+    }
+  }
+  const rgb: Rgb = [median(samples[0]), median(samples[1]), median(samples[2])]
+
+  // 一致度用平方距离比，不开根号：只是拿来做阈值判断
+  const tolerance = (BG_THRESHOLD * 1.6) ** 2
+  let agree = 0
+  const total = samples[0].length
+  for (let i = 0; i < total; i++) {
+    const dr = samples[0][i] - rgb[0]
+    const dg = samples[1][i] - rgb[1]
+    const db = samples[2][i] - rgb[2]
+    if (dr * dr + dg * dg + db * db <= tolerance) agree++
+  }
+  return { rgb, confidence: total === 0 ? 0 : agree / total }
+}
+
+/** 只看四角的中位色。保留给需要“纯背景色”的调用方（测试、旧路径） */
 export function sampleCornerColor(image: SourceImage, ratio = 0.025): Rgb {
   const { width, height, data } = image
   const w = Math.max(1, Math.round(width * ratio))

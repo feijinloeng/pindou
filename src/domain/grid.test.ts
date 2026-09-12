@@ -13,6 +13,28 @@ import {
   usedCells,
 } from './grid'
 
+describe('空档（placeable）统计', () => {
+  it('空档里的脏数据不算用量', () => {
+    const g = createGrid(4, 2, 0)
+    g.placeable = new Uint8Array([1, 1, 0, 1, 1, 0, 0, 1])
+    expect(usedCells(g)).toBe(5)
+    expect([...usageByIndex(g, 3)]).toEqual([5, 0, 0])
+  })
+
+  it('没有 placeable 时行为和以前一致', () => {
+    const g = createGrid(3, 1, 0)
+    expect(usedCells(g)).toBe(3)
+    expect([...usageByIndex(g, 2)][0]).toBe(3)
+  })
+
+  it('空档格子不算 inBounds，也读不出值', () => {
+    const g = createGrid(2, 1, 7)
+    g.placeable = new Uint8Array([1, 0])
+    expect(inBounds(g, 1, 0)).toBe(false)
+    expect(getCell(g, 1, 0)).toBe(EMPTY)
+  })
+})
+
 describe('CellGrid', () => {
   it('新建的画布是空格', () => {
     const g = createGrid(4, 3)
@@ -66,5 +88,18 @@ describe('CellGrid', () => {
 
   it('不同尺寸不算相等', () => {
     expect(gridEquals(createGrid(2, 2), createGrid(2, 3))).toBe(false)
+  })
+
+  it('格子值一样但空档不同，不算相等', () => {
+    const all = createGrid(2, 2)
+    const holed = createGrid(2, 2, EMPTY, new Uint8Array([1, 1, 0, 1]))
+    expect(gridEquals(all, holed)).toBe(false)
+    expect(gridEquals(holed, all)).toBe(false)
+  })
+
+  it('缺省 placeable = 全是板，和全 1 遮罩等价', () => {
+    const none = createGrid(2, 2)
+    const ones = createGrid(2, 2, EMPTY, new Uint8Array([1, 1, 1, 1]))
+    expect(gridEquals(none, ones)).toBe(true)
   })
 })

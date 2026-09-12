@@ -10,8 +10,12 @@ export interface LimitResult {
 }
 
 export interface LimitOptions {
+  /** 目标色数的硬上限（1 起）；<= 0 表示不限制 */
   maxColors: number
-  /** 无论用量多少都必须保住的索引（例如描边黑、高光白） */
+  /**
+   * 优先保住的索引（例如描边黑、高光白）。
+   * 注意：上限不够时它们也会被裁 —— 上限优先，保不住就按用量留大的。
+   */
   mustKeep?: number[]
 }
 
@@ -22,6 +26,7 @@ export interface LimitOptions {
  *  2. 按用量降序补到 N 个
  *  3. 超了优先删"灰泥"（中间调灰），而不是删低用量色
  * 最后按最近色把被删的并到保留色上 —— 确定性，没有随机。
+ * maxColors 是硬上限：关键色再多也不会超，"目标色数" 这个滑块说了算。
  */
 export function limitColors(
   usage: Uint32Array,
@@ -31,7 +36,7 @@ export function limitColors(
   const used: number[] = []
   for (let i = 0; i < usage.length; i++) if (usage[i] > 0) used.push(i)
 
-  if (used.length <= options.maxColors) {
+  if (options.maxColors <= 0 || used.length <= options.maxColors) {
     return {
       keep: [...used].sort((a, b) => usage[b] - usage[a]),
       remap: identityMap(used),
@@ -79,6 +84,13 @@ export function limitColors(
     let victim = pool[0]
     for (const i of pool) if (usage[i] < usage[victim]) victim = i
     keep.delete(victim)
+  }
+
+  // 3b. 连关键色自己都超过上限（maxColors=1 却要保黑白）→ 按用量裁到上限，上限是硬约束
+  if (keep.size > options.maxColors) {
+    const ordered = [...keep].sort((a, b) => usage[b] - usage[a] || a - b)
+    keep.clear()
+    for (const i of ordered.slice(0, options.maxColors)) keep.add(i)
   }
 
   const keepList = [...keep].sort((a, b) => usage[b] - usage[a] || a - b)

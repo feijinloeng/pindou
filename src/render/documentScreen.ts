@@ -1,10 +1,10 @@
-import { EMPTY, type CellGrid } from '../domain/grid'
+import { EMPTY, isPlaceable, type CellGrid } from '../domain/grid'
 import type { BoardGeometry } from '../domain/board'
 import { PT_PER_MM } from '../domain/geometry'
 import { type Palette, labelTextColor } from '../domain/palette'
 import { buildBom, drawBom, hexToRgb } from './bom'
-import { planAnnotations, screenLayout, type AnnotationPlan } from './documentLayout'
-import { BOARD_BG } from './drawPattern'
+import { planAnnotations, screenLayout, SCREEN_PAD_PT, type AnnotationPlan } from './documentLayout'
+import { BOARD_BG } from './colors'
 import { gray255, type PdfSink } from './pdf'
 
 /** 网格线颜色（第 7.7 节）：细网格 0.25pt 灰 0.6，主网格 0.5pt 灰 0.75 */
@@ -22,7 +22,7 @@ export interface ScreenPdfOptions {
   pitchLabel: number
   showCodes: boolean
   includeBom: boolean
-  /** 板阵左上角在页面里的偏移（PDF 点）；屏幕版通常留一点边 */
+  /** 板阵左上角在页面里的偏移（PDF 点）。默认 = 屏幕版的四周留白 */
   originPt?: { x: number; y: number }
   /** 页眉文字（屏幕版一般没有） */
   showTitle?: boolean
@@ -46,7 +46,7 @@ export function renderScreenPdf(sink: PdfSink, options: ScreenPdfOptions): Scree
     includeBom: options.includeBom,
   })
   const P = options.pitchMm * PT_PER_MM
-  const margin = options.originPt ?? { x: 8, y: 8 }
+  const margin = options.originPt ?? { x: SCREEN_PAD_PT, y: SCREEN_PAD_PT }
   const plan = planAnnotations(grid, palette, options.pitchMm, { enabled: options.showCodes })
 
   // 正常情况只有一页；整图超过 PDF 单页上限时才会分页（没有重叠带）
@@ -132,13 +132,20 @@ export function drawCells(
   for (let y = 0; y < sheet.rows; y++) {
     let x = 0
     while (x < sheet.cols) {
-      const value = grid.cells[rowBase + y * grid.cols + x]
-      if (value === EMPTY) {
+      const gi = rowBase + y * grid.cols + x
+      const value = grid.cells[gi]
+      // 空档不是作品的一部分：旧数据里的脏格子一律不画
+      if (value === EMPTY || !isPlaceable(grid, gi)) {
         x++
         continue
       }
       let end = x + 1
-      while (end < sheet.cols && grid.cells[rowBase + y * grid.cols + end] === value) end++
+      while (
+        end < sheet.cols &&
+        grid.cells[rowBase + y * grid.cols + end] === value &&
+        isPlaceable(grid, rowBase + y * grid.cols + end)
+      )
+        end++
       // y 轴翻转：第 (c, r) 格左下角 = origin.y + (rows - r - 1) * P
       const rect = [origin.x + x * P, origin.y + (sheet.rows - y - 1) * P, (end - x) * P, P]
       const list = buckets.get(value)

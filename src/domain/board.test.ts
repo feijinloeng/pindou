@@ -6,7 +6,12 @@ import {
   WARN_CELLS,
   checkCanvasCells,
   deriveGeometry,
+  deriveLayoutGeometry,
+  layoutSizeMm,
+  placementsFromArray,
+  placementsSizeMm,
   validateBoardArray,
+  validateLayout,
   type BoardArray,
   type BoardTypeId,
 } from './board'
@@ -211,6 +216,15 @@ describe('画布上限', () => {
     expect(checkCanvasCells(2237, 2237)?.kind).toBe('too-large')
   })
 
+  it('0 / 负数 / 小数 / NaN 都算尺寸非法，不只看上限', () => {
+    expect(checkCanvasCells(0, 10)?.kind).toBe('bad-size')
+    expect(checkCanvasCells(10, 0)?.kind).toBe('bad-size')
+    expect(checkCanvasCells(-3, 4)?.kind).toBe('bad-size')
+    expect(checkCanvasCells(4.5, 4)?.kind).toBe('bad-size')
+    expect(checkCanvasCells(Number.NaN, 4)?.kind).toBe('bad-size')
+    expect(checkCanvasCells(Number.POSITIVE_INFINITY, 4)?.kind).toBe('bad-size')
+  })
+
   it('上限常量：5,000,000 格，1,500,000 格开始警告', () => {
     expect(MAX_CELLS).toBe(5_000_000)
     expect(WARN_CELLS).toBe(1_500_000)
@@ -220,5 +234,89 @@ describe('画布上限', () => {
     // 86 × 86 块 26 板 = 2236 × 2236（临界通过），87 块 = 2262 就超了
     expect(validateBoardArray(grid(86, 86, 'mini26'))).toBeNull()
     expect(validateBoardArray(grid(87, 87, 'mini26'))?.kind).toBe('too-large')
+  })
+})
+
+describe('外部输入的畸形数据（工程文件是信任边界）', () => {
+  it('不认识的板型给结构化错误，不是 TypeError', () => {
+    const bad = { rows: [['mini52', 'not-a-board']], gapMm: 0 } as unknown as BoardArray
+    expect(validateBoardArray(bad)?.kind).toBe('unknown-board')
+    expect(() => deriveGeometry(bad)).toThrow('不认识这个板型')
+  })
+
+  it('参差数组 / 空行不再在查表时抛底层异常', () => {
+    const ragged = { rows: [['mini52'], []], gapMm: 0 } as BoardArray
+    expect(validateBoardArray(ragged)?.kind).toBe('ragged')
+    const notArray = { rows: [['mini52'], null], gapMm: 0 } as unknown as BoardArray
+    expect(validateBoardArray(notArray)?.kind).toBe('ragged')
+  })
+
+  it('validateLayout：未知板型 / 负坐标 / 小数坐标都报结构化错误', () => {
+    expect(
+      validateLayout({ placements: [{ board: 'nope' as BoardTypeId, col: 0, row: 0 }], gapMm: 0 })
+        ?.kind,
+    ).toBe('unknown-board')
+    expect(
+      validateLayout({ placements: [{ board: 'mini52', col: -1, row: 0 }], gapMm: 0 })?.kind,
+    ).toBe('bad-placement')
+    expect(
+      validateLayout({ placements: [{ board: 'mini52', col: 1.5, row: 0 }], gapMm: 0 })?.kind,
+    ).toBe('bad-placement')
+    expect(validateLayout({ placements: [], gapMm: 0 })?.kind).toBe('empty')
+    expect(
+      validateLayout({
+        placements: [
+          { board: 'mini52', col: 0, row: 0 },
+          { board: 'midi29', col: 52, row: 0 },
+        ],
+        gapMm: 0,
+      })?.kind,
+    ).toBe('mixed-pitch')
+  })
+
+  it('deriveLayoutGeometry 对小数尺寸的板阵不再算出半个格子', () => {
+    expect(() =>
+      deriveLayoutGeometry({ placements: [{ board: 'mini52', col: 0.5, row: 0 }], gapMm: 0 }),
+    ).toThrow('整数格坐标')
+  })
+})
+
+describe('gapMm 进入物理尺寸（第 11 节：1:1 打印要准）', () => {
+  const side = (gap: number) => ({
+    placements: [
+      { board: 'mini52' as const, col: 0, row: 0 },
+      { board: 'mini52' as const, col: 52, row: 0 },
+    ],
+    gapMm: gap,
+  })
+
+  it('gap=0 时就是豆格数 × 针距', () => {
+    const geom = deriveLayoutGeometry(side(0))
+    expect(geom.gapMm).toBe(0)
+    expect(layoutSizeMm(geom).w).toBeCloseTo(104 * 2.6, 6)
+  })
+
+  it('gap=1 时两块板之间多出 1mm', () => {
+    const geom = deriveLayoutGeometry(side(1))
+    expect(geom.gapMm).toBe(1)
+    // 104 个针距 + 1 条板缝
+    expect(layoutSizeMm(geom).w).toBeCloseTo(104 * 2.6 + 1, 6)
+    expect(layoutSizeMm(geom).h).toBeCloseTo(52 * 2.6, 6)
+  })
+
+  it('摆放列表版（作品库卡片用）算出同样的尺寸', () => {
+    expect(placementsSizeMm(side(1).placements, 1).w).toBeCloseTo(104 * 2.6 + 1, 6)
+    expect(placementsSizeMm(placementsFromArray(grid(1, 1, 'mini52')), 0).w).toBeCloseTo(135.2, 6)
+  })
+
+  it('板号是稳定序号，不是假的行列坐标', () => {
+    const geom = deriveLayoutGeometry({
+      placements: [
+        { board: 'mini52', col: 0, row: 0 },
+        { board: 'mini52', col: 104, row: 0 },
+      ],
+      gapMm: 0,
+    })
+    expect(geom.boards.map((b) => b.index)).toEqual([0, 1])
   })
 })

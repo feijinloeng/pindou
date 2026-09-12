@@ -1,7 +1,7 @@
 import type { CellGrid } from '../domain/grid'
-import { EMPTY } from '../domain/grid'
+import { EMPTY, isPlaceable } from '../domain/grid'
 import type { Palette } from '../domain/palette'
-import { BOARD_BG } from './drawPattern'
+import { BOARD_BG } from './colors'
 
 /**
  * 作品库的缩略图：直接从 grid 生成，不需要重算图案（第 14.2 节）。
@@ -28,7 +28,7 @@ export function renderThumbnailDataUrl(
   for (let y = 0; y < grid.rows; y++) {
     for (let x = 0; x < grid.cols; x++) {
       const value = grid.cells[y * grid.cols + x]
-      if (value === EMPTY) continue
+      if (value === EMPTY || !isPlaceable(grid, y * grid.cols + x)) continue
       const color = palette.colors[value]
       if (!color) continue
       ctx.fillStyle = color.hex

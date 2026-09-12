@@ -13,8 +13,10 @@ import { spawn, spawnSync } from 'node:child_process'
 
 const IMAGE = process.argv[2] ?? '/tmp/pindou-test-image.png'
 const PROFILE = '/tmp/pindou-e2e-chrome'
-const APP = 'http://localhost:5173/#/editor'
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const BASE = process.env.PINDOU_E2E_URL ?? 'http://localhost:5173'
+const APP = `${BASE}/#/editor`
+const CHROME =
+  process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const PORT = 9400 + Math.floor(Math.random() * 400)
 
 // 上一次跑崩了可能留下 Chrome 占着同一个 profile，先清掉

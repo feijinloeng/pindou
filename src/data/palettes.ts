@@ -23,8 +23,17 @@ export const DISCLAIMER = PALETTE_FILE.disclaimer
 export const TRADEMARKS = PALETTE_FILE.trademarks
 export const ATTRIBUTION = PALETTE_FILE.attribution
 
+export const DEFAULT_PALETTE_ID = 'mard-291'
+
+/** 找不到就返回 null。导入工程时必须能区分“没有这套色板”和“就用第一套” */
+export function findPalette(id: unknown): Palette | null {
+  if (typeof id !== 'string') return null
+  return PALETTES.find((p) => p.id === id) ?? null
+}
+
+/** 界面用的取色板：找不到就当默认色板（调用方已经拿不到更好的了） */
 export function getPalette(id: string): Palette {
-  return PALETTES.find((p) => p.id === id) ?? PALETTES[0]
+  return findPalette(id) ?? PALETTES[0]
 }
 
 export function paletteRgb(palette: Palette): Rgb[] {

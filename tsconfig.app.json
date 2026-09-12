@@ -1,6 +1,10 @@
 {
   "compilerOptions": {
     "resolveJsonModule": true,
+    /* 完整严格模式：工程文件、板阵、异步状态都是外部输入，
+       没有 strictNullChecks 就等于把一半的坏情况交给运气 */
+    "strict": true,
+    "noImplicitOverride": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "target": "es2023",
     "lib": ["ES2023", "DOM"],

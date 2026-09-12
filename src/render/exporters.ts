@@ -1,4 +1,4 @@
-import { zipSync } from 'fflate'
+import { unzipSync, zipSync } from 'fflate'
 
 import type { BoardGeometry } from '../domain/board'
 import type { CellGrid } from '../domain/grid'
@@ -10,6 +10,7 @@ import { renderPaperPdf } from './documentPaper'
 import { renderScreenPdf } from './documentScreen'
 import { createPdfSink } from './pdf'
 import { drawPreview, planPreview } from './previewImage'
+import { safeName } from './download'
 
 /**
  * 导出编排：只负责"调渲染 + 组装文件 + 触发下载"，不含任何排版数学。
@@ -97,17 +98,61 @@ export function buildPaperZip(ctx: ExportContext, options: PaperExportOptions = 
       overlap: options.overlap,
       boards: [board],
     })
-    // 命名格式：板-r{行}c{列}-{板型}.pdf（第 11.3 节）
-    const name = `板-r${board.row + 1}c${board.col + 1}-${board.cw}.pdf`
+    // 命名格式：板-{序号}-{板型}.pdf（第 11.3 节）。自由摆放的板没有可靠行列号，
+    // 序号就是用户认得的“第几块板”
+    const name = `板-${board.index + 1}-${board.cw}.pdf`
     files[name] = sink.output()
   }
 
   files['用量.csv'] = new TextEncoder().encode(
     bomToCsv(buildBom(ctx.grid, ctx.palette), ctx.palette.displayName),
   )
-  files['总览.txt'] = new TextEncoder().encode(overviewText(ctx, options))
+  // 带 BOM：Windows 记事本不认没有 BOM 的 UTF-8，中文会变乱码
+  files['总览.txt'] = utf8WithBom(overviewText(ctx, options))
+  files['打印说明.txt'] = utf8WithBom(printNotes(ctx))
 
   return zipSync(files, { level: 6 })
+}
+
+function utf8WithBom(text: string): Uint8Array {
+  const body = new TextEncoder().encode(text)
+  const out = new Uint8Array(body.length + 3)
+  out.set([0xef, 0xbb, 0xbf])
+  out.set(body, 3)
+  return out
+}
+
+/**
+ * 中文打印说明（PDF 说明页只能用英文：jsPDF 内置字体没有 CJK，
+ * 塞中文要么变方块、要么得自带几 MB 字体子集。详见 adr/0005 之外的取舍记录）
+ */
+function printNotes(ctx: ExportContext): string {
+  const mm = (n: number) => n.toFixed(1)
+  return [
+    `《${ctx.name}》打印说明`,
+    '',
+    '一、打印设置',
+    '  1. 纸张选 A4，方向按每页页眉标注（横版 / 竖版）。',
+    '  2. 缩放必须选「100%」「实际大小」，或把缩放设为「无」。',
+    '     绝对不要选「适合页面」「适应边框」——那样每格的针距就不是 1:1 了。',
+    '  3. 打印完先量第一页页脚的 100mm 校准尺。量出来不是 100.0mm 就回去改缩放。',
+    '',
+    '二、拼接',
+    `  1. 成品总尺寸约 ${mm(ctx.geom.cols * ctx.pitchMm)} × ${mm(ctx.geom.rows * ctx.pitchMm)} mm，`,
+    `     共 ${ctx.geom.boards.length} 块板、${ctx.geom.cols} × ${ctx.geom.rows} 格、针距 ${ctx.pitchMm}mm。`,
+    '  2. 相邻两页之间是重叠带：两页有一小片内容重复。别裁掉，直接把两页摆好、',
+    '     让重叠带里的对位十字对齐，再用胶带从背面粘住。',
+    '  3. 按顺序拼：先横向拼成一整条，再把横条自上而下接起来。',
+    '',
+    '三、照着摆豆',
+    '  1. 把打印稿垫在透明底板下面，从上往下、从左往右，一格一颗。',
+    '  2. 每一格上的色号就是这一颗豆的色号；区域中间的大号字是那一片的主色。',
+    '  3. 页边的数字是坐标，拼到一半走神了可以靠它找位置。',
+    '  4. 每块板的用量见「用量.csv」，可用 Excel / 表格软件打开。',
+    '',
+    `色板：${ctx.palette.displayName}`,
+    `页面：屏幕版（跟做）与纸面版（1:1）都是矢量 PDF，放大不会糊。`,
+  ].join('\n')
 }
 
 function overviewText(ctx: ExportContext, options: PaperExportOptions): string {
@@ -178,16 +223,146 @@ export function buildBomCsv(ctx: ExportContext): Uint8Array {
 // 浏览器下载
 // ---------------------------------------------------------------------------
 
-export function downloadBytes(bytes: Uint8Array, filename: string, mime: string): void {
-  const blob = new Blob([bytes as unknown as BlobPart], { type: mime })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+/** 预览图 PNG 的降级警告：实际像素和用户以为的不一致时必须说出来（P2-24） */
+export interface ExportEstimate {
+  /** 预览图实际像素 */
+  previewWidth: number
+  previewHeight: number
+  /** 用户选的 px/格 */
+  previewRequested: number
+  /** 实际生效的 px/格（可能因为上限被降） */
+  previewActual: number
+  previewClamped: boolean
+  /** 预览图像素缓冲的粗略内存（字节） */
+  previewBytes: number
+  screenPages: number
+  paperPages: number
+  warnings: string[]
 }
 
-export function safeName(name: string): string {
-  return (name || '作品').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)
+/** 超过这么多像素缓冲就先提醒一句：100MP × 4B = 400MB，真的会崩标签页 */
+export const PREVIEW_WARN_BYTES = 150 * 1024 * 1024
+
+/**
+ * 导出前的估算：一次算完，界面直接显示。
+ * 只算尺寸和页数，不碰像素，所以可以在渲染里同步调。
+ */
+export function estimateExport(
+  ctx: ExportContext,
+  selection: ExportSelection,
+): ExportEstimate {
+  const plan = planPreview(ctx.grid, selection.previewScale)
+  const warnings: string[] = []
+  if (selection.preview && plan.clamped) {
+    warnings.push(
+      `预览图超过单张上限，每格已从 ${selection.previewScale}px 降到 ${plan.pxPerCell.toFixed(2)}px（实际 ${plan.width}×${plan.height}）`,
+    )
+  }
+  const previewBytes = plan.width * plan.height * 4
+  if (selection.preview && previewBytes > PREVIEW_WARN_BYTES) {
+    warnings.push(
+      `预览图约 ${plan.width}×${plan.height}，需要大约 ${Math.round(previewBytes / 1024 / 1024)}MB 内存，导出时会卡一阵`,
+    )
+  }
+  const screenPages = selection.screen
+    ? screenLayout(ctx.grid, ctx.pitchMm, {
+        showCodes: selection.screenCodes,
+        includeBom: selection.screenBom,
+      }).sheets.length
+    : 0
+  const paperPages = selection.paper
+    ? paperLayout(ctx.grid, ctx.pitchMm, {
+        boards: selection.paperScope === 'boards' ? ctx.geom.boards : undefined,
+      }).sheets.length
+    : 0
+  return {
+    previewWidth: plan.width,
+    previewHeight: plan.height,
+    previewRequested: selection.previewScale,
+    previewActual: plan.pxPerCell,
+    previewClamped: plan.clamped,
+    previewBytes,
+    screenPages,
+    paperPages,
+    warnings,
+  }
+}
+
+export interface ExportSelection {
+  preview: boolean
+  screen: boolean
+  paper: boolean
+  csv: boolean
+  paperScope: 'boards' | 'zip'
+  showCodes: boolean
+  /** 屏幕版的色号（默认开）与末页用量清单 */
+  screenCodes: boolean
+  screenBom: boolean
+  previewScale: number
+}
+
+export interface ExportBundle {
+  bytes: Uint8Array
+  filename: string
+  mime: string
+  /** 包了几个文件（1 = 没打包，直接就是那个文件） */
+  files: number
+  /** 降级 / 风险提示，界面要把它们说出来 */
+  warnings: string[]
+}
+
+/**
+ * 一次用户手势只能可靠地触发**一个**下载：勾了多个格式就打包成一个 zip。
+ * 以前一个 run() 里连发 3-5 个下载，浏览器会拦截、只放行第一个，或者弹一堆权限提示。
+ */
+export async function buildExportBundle(
+  ctx: ExportContext,
+  selection: ExportSelection,
+): Promise<ExportBundle> {
+  const base = safeName(ctx.name)
+  const files: Record<string, Uint8Array> = {}
+  const warnings = estimateExport(ctx, selection).warnings
+  if (selection.preview) {
+    files[`${base}-预览图.png`] = await buildPreviewPng(ctx, { pxPerCell: selection.previewScale })
+  }
+  if (selection.screen) {
+    files[`${base}-屏幕版.pdf`] = buildScreenPdf(ctx, {
+      showCodes: selection.screenCodes,
+      includeBom: selection.screenBom,
+    })
+  }
+  if (selection.paper && selection.paperScope === 'boards') {
+    files[`${base}-纸面版.pdf`] = buildPaperPdf(ctx, {
+      boards: ctx.geom.boards,
+      showCodes: selection.showCodes,
+      includeBom: true,
+      instructions: true,
+    })
+  }
+  if (selection.paper && selection.paperScope === 'zip') {
+    // 按板导出本身就是 zip：摊开合进总包，不套娃
+    Object.assign(files, unzipSync(buildPaperZip(ctx, { showCodes: selection.showCodes })))
+  }
+  if (selection.csv) files[`${base}-用量.csv`] = buildBomCsv(ctx)
+
+  const names = Object.keys(files)
+  if (names.length === 0) throw new Error('一个导出项都没勾')
+  if (names.length === 1) {
+    const only = names[0]
+    return { bytes: files[only], filename: only, mime: mimeOf(only), files: 1, warnings }
+  }
+  return {
+    bytes: zipSync(files, { level: 6 }),
+    filename: `${base}.zip`,
+    mime: 'application/zip',
+    files: names.length,
+    warnings,
+  }
+}
+
+function mimeOf(filename: string): string {
+  if (filename.endsWith('.png')) return 'image/png'
+  if (filename.endsWith('.pdf')) return 'application/pdf'
+  if (filename.endsWith('.csv')) return 'text/csv;charset=utf-8'
+  return 'application/octet-stream'
 }

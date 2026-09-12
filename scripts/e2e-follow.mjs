@@ -10,8 +10,10 @@
 import { rmSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 
+const BASE = process.env.PINDOU_E2E_URL ?? 'http://localhost:5173'
 const IMAGE = process.argv[2] ?? '/tmp/pindou-test-image.png'
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const CHROME =
+  process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const PORT = 9400 + Math.floor(Math.random() * 400)
 const PROFILE = '/tmp/pindou-e2e-follow'
 const BUDGET_MS = 2000
@@ -75,7 +77,7 @@ const check = (ok, label, detail = '') => {
 
 // 1) 切到 44×44 个 26 板 = 1144×1144 = 130 万格（跟出问题那次一样大）
 //    现在没有预设下拉框了：点「选板 / 换板」→ 选板页右下角的压测按钮
-await send('Page.navigate', { url: 'http://localhost:5173/#/editor' })
+await send('Page.navigate', { url: `${BASE}/#/editor` })
 check((await waitFor(`!!document.querySelector('[data-surface]')`, 30000)) >= 0, '编辑器打开（选板页）')
 const stress = `[...document.querySelectorAll('button')].find((b) => b.innerText.includes('130 万格'))`
 check((await waitFor(`(${stress}) !== undefined`, 20000)) >= 0, '选板页有 130 万格压测台面')
@@ -89,7 +91,7 @@ const convertMs = await waitFor(`document.querySelector('aside').innerText.inclu
 check(convertMs >= 0, '130 万格转换完成', `${convertMs} ms`)
 
 // 2) 进跟做模式：最关心"会不会又卡住"
-await send('Page.navigate', { url: 'http://localhost:5173/#/follow' })
+await send('Page.navigate', { url: `${BASE}/#/follow` })
 let worst = 0
 let ready = false
 const start = Date.now()

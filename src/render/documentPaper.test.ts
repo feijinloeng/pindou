@@ -161,6 +161,39 @@ describe('纸面版 1:1', () => {
     expect(result.sheetsDrawn).toBe(6)
   })
 
+  it('按板导出：后一块板的第一张纸不该出现裁切线和重叠带', () => {
+    // 两块 52 并排：第二块在全局坐标里 col0 = 52 > 0，旧逻辑会把它当成"第 2 页"
+    const grid = checkerGrid(104, 52)
+    const geom = deriveGeometry({ rows: [['mini52', 'mini52']], gapMm: 0 })
+    expect(geom.boards[1].c0).toBe(52)
+    const renderBoards = (boards?: typeof geom.boards) => {
+      const sink = createPdfSink({ widthPt: A4_PT.w, heightPt: A4_PT.h })
+      const result = renderPaperPdf(sink, {
+        grid,
+        palette: PALETTE,
+        geom,
+        pitchMm: 2.6,
+        pitchLabel: 2.6,
+        showCodes: false,
+        includeBom: false,
+        boards,
+      })
+      return { sink, result }
+    }
+
+    const first = renderBoards([geom.boards[0]])
+    const second = renderBoards([geom.boards[1]])
+    expect(first.result.sheetsDrawn).toBe(1)
+    expect(second.result.sheetsDrawn).toBe(1)
+    expect(first.sink.contentStream(0)).not.toContain('CUT HERE')
+    expect(second.sink.contentStream(0)).not.toContain('CUT HERE')
+
+    // 整图导出时才真的有第 2 页，那一页必须有裁切线
+    const whole = renderBoards(undefined)
+    expect(whole.result.sheetsDrawn).toBe(2)
+    expect(whole.sink.contentStream(1)).toContain('CUT HERE')
+  })
+
   it('色号默认关：不开就不产生任何标注文字', () => {
     const { sink } = render(52, 52)
     const texts = (sink.contentStream(0).match(/\((A1|B1)\) Tj/g) ?? []).length

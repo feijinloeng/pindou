@@ -133,6 +133,38 @@ export function clampViewport(
   }
 }
 
+/**
+ * 把视口对到某个区域上（跟做模式的"推荐下一个区域"）。
+ * 两边都要能调：当前缩放太大就缩下来（否则推荐了也看不全），太小就放大。
+ * 最后过一遍 clampViewport，目标不会跑出画布外。
+ */
+export function fitViewportToRegion(
+  vp: Viewport,
+  bbox: { c0: number; r0: number; c1: number; r1: number },
+  canvasW: number,
+  canvasH: number,
+  cols: number,
+  rows: number,
+  padCells = 25,
+): Viewport {
+  if (!canvasW || !canvasH) return vp
+  const spanCols = Math.max(8, bbox.c1 - bbox.c0 + padCells)
+  const spanRows = Math.max(8, bbox.r1 - bbox.r0 + padCells)
+  const zoom = clampZoom(Math.min(canvasW / spanCols, canvasH / spanRows))
+  return clampViewport(
+    {
+      ...vp,
+      zoom,
+      panX: canvasW / 2 - ((bbox.c0 + bbox.c1) / 2) * zoom,
+      panY: canvasH / 2 - ((bbox.r0 + bbox.r1) / 2) * zoom,
+    },
+    cols,
+    rows,
+    canvasW,
+    canvasH,
+  )
+}
+
 /** 空格判空用（渲染和工具都从这儿走，避免各处重复写 EMPTY 比较） */
 export function isEmpty(value: number): boolean {
   return value === EMPTY

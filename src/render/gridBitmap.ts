@@ -1,6 +1,6 @@
 import { EMPTY, type CellGrid } from '../domain/grid'
 import { type Palette, hexToRgb } from '../domain/palette'
-import { BOARD_BG } from './drawPattern'
+import { BOARD_BG } from './colors'
 import type { Viewport } from './canvasViewport'
 
 /**

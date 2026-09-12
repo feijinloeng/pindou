@@ -1,4 +1,4 @@
-import { ensureLayout, type Project } from '../domain/project'
+import { decodeStoredProject, type Project } from '../domain/project'
 
 /**
  * 作品库的持久化。三个 store（第 14.1 节）：
@@ -90,14 +90,67 @@ export async function clearAll(): Promise<void> {
 
 // --- 工程 ---
 
+/**
+ * 作品库列表用的条目。
+ * 草稿可能比正式工程新（自动保存先写正式再写草稿，中间断了就不同步），
+ * 所以列表要合并两份，卡片上所有动作都基于这份最新快照。
+ */
+export interface LibraryEntry {
+  project: Project
+  /** 磁盘上还存着一份更新的草稿，卡片摘要随时会变 */
+  hasNewerDraft: boolean
+}
+
+export interface LibraryListing {
+  entries: LibraryEntry[]
+  /** 读不出来的条目（坏数据、旧版本…）。不能默默丢掉，得让用户知道 */
+  issues: string[]
+}
+
+/**
+ * 作品库读盘。IndexedDB 里的对象和工程文件走同一套校验（validateProject），
+ * 坏数据在这里就被挡住，不会绕过导入路径直接进渲染层。
+ */
+export async function listProjectEntries(): Promise<LibraryListing> {
+  const [stored, drafts] = await Promise.all([getAll<unknown>('projects'), getAll<unknown>('drafts')])
+  const issues: string[] = []
+
+  const draftsById = new Map<string, Project>()
+  for (const raw of drafts) {
+    const project = decodeStoredProject((raw as Draft | undefined)?.project)
+    if (project) draftsById.set(project.id, project)
+  }
+
+  const entries: LibraryEntry[] = []
+  for (const raw of stored) {
+    const project = decodeStoredProject(raw)
+    if (!project) {
+      const name = (raw as { name?: string } | undefined)?.name
+      issues.push(`${name ?? '（没名字的条目）'}：数据损坏，读不出来`)
+      continue
+    }
+    const draft = draftsById.get(project.id)
+    draftsById.delete(project.id)
+    const useDraft = !!draft && draft.updatedAt > project.updatedAt
+    entries.push({ project: useDraft ? draft : project, hasNewerDraft: useDraft })
+  }
+  // 只有草稿、没有正式工程的条目（新建后写盘失败过）也别漏
+  for (const draft of draftsById.values()) {
+    entries.push({ project: draft, hasNewerDraft: true })
+    issues.push(`${draft.name}：只有草稿，没有正式工程`)
+  }
+
+  entries.sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
+  return { entries, issues }
+}
+
 export async function listProjects(): Promise<Project[]> {
-  const all = await getAll<Project>('projects')
-  return all.map(ensureLayout).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  const { entries } = await listProjectEntries()
+  return entries.map((entry) => entry.project)
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
-  const project = await get<Project>('projects', id)
-  return project && ensureLayout(project)
+  return decodeStoredProject(await get<unknown>('projects', id)) ?? undefined
 }
 
 export function putProject(project: Project): Promise<IDBValidKey> {
@@ -113,6 +166,8 @@ export async function trashProject(id: string): Promise<void> {
     name: `[已删除] ${project.name.replace(/^\[已删除\] /, '')}`,
     updatedAt: new Date().toISOString(),
   })
+  // 已删掉的工程不能被“上次打开的工程”自动恢复回来
+  if (lastProjectId() === id) forgetLastProject()
 }
 
 /** 从回收站恢复：把前缀去掉 */
@@ -131,6 +186,7 @@ export async function purgeProject(id: string): Promise<void> {
   await remove('projects', id)
   await remove('drafts', id)
   await remove('images', id)
+  if (lastProjectId() === id) forgetLastProject()
 }
 
 // --- 草稿 ---
@@ -144,13 +200,12 @@ export async function saveDraft(project: Project): Promise<void> {
 }
 
 export async function getDraft(id: string): Promise<Project | undefined> {
-  const project = (await get<Draft>('drafts', id))?.project
-  return project && ensureLayout(project)
+  return decodeStoredProject((await get<Draft>('drafts', id))?.project) ?? undefined
 }
 
 export async function listDrafts(): Promise<Project[]> {
   const all = await getAll<Draft>('drafts')
-  return all.map((d) => d.project)
+  return all.map((d) => decodeStoredProject(d.project)).filter((p): p is Project => !!p)
 }
 
 export function clearDraft(id: string): Promise<undefined> {
@@ -192,9 +247,24 @@ export function lastProjectId(): string | null {
   }
 }
 
-/** 刷新后自动恢复：优先草稿，其次正式保存的工程 */
+export function forgetLastProject(): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.removeItem(LAST_PROJECT_KEY)
+  } catch {
+    // 隐私模式，忽略
+  }
+}
+
+/** 刷新后自动恢复：优先草稿，其次正式保存的工程。回收站里的不恢复 */
 export async function restoreLastProject(): Promise<Project | undefined> {
   const id = lastProjectId()
   if (!id) return undefined
-  return (await getDraft(id)) ?? (await getProject(id))
+  const project = (await getDraft(id)) ?? (await getProject(id))
+  if (!project) return undefined
+  if (project.name.startsWith('[已删除] ')) {
+    forgetLastProject()
+    return undefined
+  }
+  return project
 }

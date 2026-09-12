@@ -3,6 +3,28 @@ import type { DownscaleMode } from './downscale'
 
 export type StrategyId = 'general' | 'cartoon' | 'portrait' | 'pixelart' | 'lineart'
 
+/** 用户在界面上选的内容类型：auto = 按内容分析结果自己挑 */
+export type StrategyChoice = 'auto' | StrategyId
+
+/** 内容分析 → 策略。分析结果现在真的驱动参数，不再只是一个显示用的结论 */
+export const KIND_TO_STRATEGY: Record<'lineart' | 'pixelart' | 'document' | 'photo', StrategyId> =
+  {
+    lineart: 'lineart',
+    pixelart: 'pixelart',
+    // 文档 = 白底黑字，按线稿那套（不平滑、不去杂）处理线条最干净
+    document: 'lineart',
+    photo: 'general',
+  }
+
+/** 把“自动/手动”解析成真正干活的策略 */
+export function resolveStrategy(
+  choice: StrategyChoice,
+  kind?: 'lineart' | 'pixelart' | 'document' | 'photo',
+): ConversionStrategy {
+  if (choice !== 'auto') return STRATEGIES[choice] ?? STRATEGIES.general
+  return STRATEGIES[kind ? KIND_TO_STRATEGY[kind] : 'general']
+}
+
 export interface ConversionStrategy {
   id: StrategyId
   label: string
@@ -94,10 +116,12 @@ export const STRATEGIES: Record<StrategyId, ConversionStrategy> = {
 /**
  * 抖动强度：null = 跟随内容类型的默认值，0 = 明确关掉，>0 = 用这个值。
  * UI 必须显示【实际生效】的值，否则会出现「复选框没勾、实际却在抖动」。
+ * 注意：auto 策略在转换前算不出默认值，所以只能报一个中立的兜底值 ——
+ * 真正生效的值以转换结果里的 strategyUsed 为准。
  */
-export function resolveDither(strategyId: StrategyId, dither: number | null): number {
+export function resolveDither(strategyId: StrategyChoice, dither: number | null): number {
   if (dither !== null && dither !== undefined) return dither
-  return (STRATEGIES[strategyId] ?? STRATEGIES.general).dither
+  return resolveStrategy(strategyId).dither
 }
 
 export const STRATEGY_LIST: ConversionStrategy[] = [
@@ -107,3 +131,10 @@ export const STRATEGY_LIST: ConversionStrategy[] = [
   STRATEGIES.pixelart,
   STRATEGIES.lineart,
 ]
+
+/** 界面下拉里的“自动”项（不属于 STRATEGIES：它自己没有参数） */
+export const AUTO_OPTION = {
+  id: 'auto' as const,
+  label: '自动',
+  description: '按图片内容自动挑档位',
+}

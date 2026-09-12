@@ -11,6 +11,7 @@ import {
   paperLayout,
   paginate,
   planAnnotations,
+  SCREEN_PAD_PT,
   screenLayout,
   sheetAt,
 } from './documentLayout'
@@ -101,11 +102,13 @@ describe('A4 排版数学', () => {
 })
 
 describe('布局引擎：屏幕版 vs 纸面版', () => {
-  it('屏幕版单页尺寸 = 豆数 × 针距，精确到 0.01mm', () => {
+  it('屏幕版单页尺寸 = 豆数 × 针距 + 四周留白，精确到 0.01mm', () => {
     const grid = createGrid(1153, 1153)
     const layout = screenLayout(grid, 2.6, { showCodes: true, includeBom: true })
-    expect(layout.pageMm.w).toBeCloseTo(2997.8, 6)
-    expect(layout.pageMm.h).toBeCloseTo(2997.8, 6)
+    const padMm = (SCREEN_PAD_PT * 2) / PT_PER_MM
+    expect(layout.pageMm.w).toBeCloseTo(2997.8 + padMm, 6)
+    expect(layout.pageMm.h).toBeCloseTo(2997.8 + padMm, 6)
+    expect(layout.pageMm.w * PT_PER_MM).toBeLessThanOrEqual(MAX_PAGE_PT)
     expect(layout.sheets).toHaveLength(1)
     expect(layout.overlap).toBe(0)
     expect(layout.drawSheetMarks).toBe(false)
@@ -134,7 +137,7 @@ describe('布局引擎：屏幕版 vs 纸面版', () => {
   it('按板导出：只排这块板的范围', () => {
     const grid = createGrid(156, 156)
     const boards = [
-      { row: 0, col: 2, board: 'mini52' as const, c0: 104, r0: 0, cw: 52, rh: 52 },
+      { index: 2, board: 'mini52' as const, c0: 104, r0: 0, cw: 52, rh: 52 },
     ]
     const layout = paperLayout(grid, 2.6, { boards })
     expect(layout.sheets).toHaveLength(1)
@@ -165,6 +168,14 @@ describe('自适应标注（第 7.8 节）', () => {
     expect(plan.labels).toHaveLength(1)
     // 独立算一遍，确认口径一致
     expect(ringOf(grid.cells, 40, 40, 3)).toHaveLength(76)
+  })
+
+  it('空档里的脏格子不参与标注（导出时不会凭空多出个色号）', () => {
+    const grid = createGrid(6, 1, 1)
+    grid.placeable = new Uint8Array([1, 1, 0, 1, 1, 1])
+    const plan = planAnnotations(grid, palette, 2.6)
+    expect(plan.cellMarks[2]).toBe(0)
+    expect(plan.stats.textObjects).toBe(5) // 6 格减去空档那 1 格
   })
 
   it('1×50 的长条必须走逐格，不能出大标签（包围盒很大但内接正方形是 1）', () => {

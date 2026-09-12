@@ -8,22 +8,14 @@ import type { Project } from '../domain/project'
 export function startAutosave(debounceMs = 2000): () => void {
   if (typeof indexedDB === 'undefined') return () => {}
   let timer: ReturnType<typeof setTimeout> | null = null
-  let saving = false
 
-  const flush = async () => {
-    if (saving) return
-    saving = true
-    try {
-      await useEditor.getState().saveNow()
-    } finally {
-      saving = false
-    }
-  }
+  // 重入由 store 的保存队列负责：这里的 flush 是"排一次队"，不会丢
+  const flush = () => void useEditor.getState().saveNow()
 
   const schedule = (immediate: boolean) => {
     if (timer) clearTimeout(timer)
-    if (immediate) void flush()
-    else timer = setTimeout(() => void flush(), debounceMs)
+    if (immediate) flush()
+    else timer = setTimeout(flush, debounceMs)
   }
 
   const unsubscribe = useEditor.subscribe((state, previous) => {
@@ -34,7 +26,7 @@ export function startAutosave(debounceMs = 2000): () => void {
   })
 
   const onHidden = () => {
-    if (document.visibilityState === 'hidden') void flush()
+    if (document.visibilityState === 'hidden') flush()
   }
   document.addEventListener('visibilitychange', onHidden)
 

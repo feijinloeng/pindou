@@ -11,6 +11,12 @@ export const DEFAULT_MARGIN_MM = 5
 export const OVERLAP_CELLS = 3
 /** PDF 单页上限 14400pt ≈ 5080mm */
 export const MAX_PAGE_PT = 14400
+/**
+ * 屏幕版四周的留白（pt）。屏幕版没有打印边距，但坐标数字是画在图案外面的：
+ * 左边刻度在 origin.x 左侧约 size*2.2 ≈ 13pt，上边刻度在图案上边再加一个行高。
+ * 页面不留出这块地方，右侧和上侧的图案/数字就会跑出页面被裁掉。
+ */
+export const SCREEN_PAD_PT = 16
 
 export interface SheetRange {
   col0: number
@@ -95,16 +101,20 @@ export interface ScreenLayoutOptions {
 /**
  * 屏幕版：永远单页 —— 除非整图超过 PDF 的单页上限（14400pt ≈ 5080mm），
  * 那就普通分页（没有重叠带）。5.8m 的极限画布会走到这条路。
+ * 页面 = 图案尺寸 + 四周 SCREEN_PAD_PT 留白（渲染器把图案放在留白内侧）。
  */
 export function screenLayout(
   grid: CellGrid,
   pitchMm: number,
   options: ScreenLayoutOptions,
 ): DocumentLayout {
-  const perPageCells = Math.floor(MAX_PAGE_PT / (pitchMm * PT_PER_MM))
-  const pageMm = { w: grid.cols * pitchMm, h: grid.rows * pitchMm }
-  const fits =
-    pageMm.w * PT_PER_MM <= MAX_PAGE_PT && pageMm.h * PT_PER_MM <= MAX_PAGE_PT
+  const padPt = SCREEN_PAD_PT * 2
+  const perPageCells = Math.max(1, Math.floor((MAX_PAGE_PT - padPt) / (pitchMm * PT_PER_MM)))
+  const pageMm = {
+    w: grid.cols * pitchMm + padPt / PT_PER_MM,
+    h: grid.rows * pitchMm + padPt / PT_PER_MM,
+  }
+  const fits = pageMm.w * PT_PER_MM <= MAX_PAGE_PT && pageMm.h * PT_PER_MM <= MAX_PAGE_PT
 
   if (fits) {
     return {
@@ -112,7 +122,7 @@ export function screenLayout(
       cellsPerPage: { cols: grid.cols, rows: grid.rows },
       overlap: 0,
       sheets: [{ col0: 0, row0: 0, cols: grid.cols, rows: grid.rows }],
-      marginMm: 0,
+      marginMm: SCREEN_PAD_PT / PT_PER_MM,
       drawBoardSeams: true,
       drawSheetMarks: false,
       drawCodes: options.showCodes,
@@ -121,13 +131,16 @@ export function screenLayout(
     }
   }
 
-  const smallPageMm = { w: perPageCells * pitchMm, h: perPageCells * pitchMm }
+  const smallPageMm = {
+    w: perPageCells * pitchMm + padPt / PT_PER_MM,
+    h: perPageCells * pitchMm + padPt / PT_PER_MM,
+  }
   return {
     pageMm: smallPageMm,
     cellsPerPage: { cols: perPageCells, rows: perPageCells },
     overlap: 0,
     sheets: paginate(grid.cols, grid.rows, perPageCells, perPageCells, 0),
-    marginMm: 0,
+    marginMm: SCREEN_PAD_PT / PT_PER_MM,
     drawBoardSeams: true,
     drawSheetMarks: false,
     drawCodes: options.showCodes,
@@ -277,11 +290,14 @@ export function planAnnotations(
   const visited = new Uint8Array(total)
   const inComponent = new Uint8Array(total)
   const ringMark = new Uint8Array(total)
+  // 空档不算可拼区域：旧脏数据里的格子不能变成大标签或逐格标
+  const placeable = grid.placeable
+  const open = (i: number) => !placeable || placeable[i] === 1
   let component = new Uint32Array(Math.min(total, 4096))
   let stack = new Int32Array(Math.min(total, 4096))
 
   for (let start = 0; start < total; start++) {
-    if (visited[start] || cells[start] === EMPTY) continue
+    if (visited[start] || cells[start] === EMPTY || !open(start)) continue
     const color = cells[start]
 
     // ① 4 邻域 BFS 求连通域（显式栈，大图不爆）
@@ -296,22 +312,22 @@ export function planAnnotations(
       inComponent[i] = 1
       const x = i % cols
       const y = (i - x) / cols
-      if (x > 0 && !visited[i - 1] && cells[i - 1] === color) {
+      if (x > 0 && !visited[i - 1] && cells[i - 1] === color && open(i - 1)) {
         visited[i - 1] = 1
         if (top === stack.length) stack = growI32(stack, top)
         stack[top++] = i - 1
       }
-      if (x + 1 < cols && !visited[i + 1] && cells[i + 1] === color) {
+      if (x + 1 < cols && !visited[i + 1] && cells[i + 1] === color && open(i + 1)) {
         visited[i + 1] = 1
         if (top === stack.length) stack = growI32(stack, top)
         stack[top++] = i + 1
       }
-      if (y > 0 && !visited[i - cols] && cells[i - cols] === color) {
+      if (y > 0 && !visited[i - cols] && cells[i - cols] === color && open(i - cols)) {
         visited[i - cols] = 1
         if (top === stack.length) stack = growI32(stack, top)
         stack[top++] = i - cols
       }
-      if (y + 1 < rows && !visited[i + cols] && cells[i + cols] === color) {
+      if (y + 1 < rows && !visited[i + cols] && cells[i + cols] === color && open(i + cols)) {
         visited[i + cols] = 1
         if (top === stack.length) stack = growI32(stack, top)
         stack[top++] = i + cols

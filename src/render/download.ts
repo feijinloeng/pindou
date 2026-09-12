@@ -1,0 +1,21 @@
+/**
+ * 触发浏览器下载 + 文件名清洗。
+ *
+ * ⚠️ 这十几行单独一个模块，不能放回 exporters.ts：
+ * 作品库只需要"下载一个 json"，如果从 exporters 引，就会把
+ * PDF 排版 + jsPDF + html2canvas 整条链拖进首屏（P2-26）。
+ */
+
+export function downloadBytes(bytes: Uint8Array, filename: string, mime: string): void {
+  const blob = new Blob([bytes as unknown as BlobPart], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export function safeName(name: string): string {
+  return (name || '作品').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)
+}

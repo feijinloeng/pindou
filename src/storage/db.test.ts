@@ -10,10 +10,14 @@ import {
   clearDraft,
   getDraft,
   getProject,
+  lastProjectId,
+  listProjectEntries,
   listProjects,
   purgeProject,
   put,
   putProject,
+  rememberLastProject,
+  restoreLastProject,
   restoreProject,
   saveDraft,
   trashProject,
@@ -103,5 +107,87 @@ describe('作品库持久化', () => {
     expect(parsed.error).toBeNull()
     expect(parsed.project!.grid.cells[10]).toBe(9)
     expect(parsed.project!.name).toBe('往返')
+  })
+})
+
+describe('作品库列表（P2-07）', () => {
+  it('列表拿的是最新快照：草稿比正式工程新时就显示草稿', async () => {
+    const p = project('落后了')
+    p.updatedAt = '2020-01-01T00:00:00.000Z'
+    await putProject(p)
+    const draft = { ...p, updatedAt: '2030-01-01T00:00:00.000Z' }
+    draft.grid = { ...p.grid, cells: p.grid.cells.slice() }
+    draft.grid.cells[0] = 9
+    await saveDraft(draft)
+    const { entries } = await listProjectEntries()
+    expect(entries).toHaveLength(1)
+    expect(entries[0].hasNewerDraft).toBe(true)
+    expect(entries[0].project.grid.cells[0]).toBe(9)
+  })
+
+  it('正式工程更新时不标记草稿，但也不丢掉草稿数据', async () => {
+    const p = project('最新')
+    p.updatedAt = '2030-01-01T00:00:00.000Z'
+    await putProject(p)
+    await saveDraft({ ...p, updatedAt: '2020-01-01T00:00:00.000Z' })
+    const { entries } = await listProjectEntries()
+    expect(entries[0].hasNewerDraft).toBe(false)
+    expect(entries[0].project.name).toBe('最新')
+  })
+
+  it('坏条目进 issues，不把整个作品库带崩', async () => {
+    await putProject(project('好的'))
+    await put('projects', { id: 'bad', name: '坏的', schemaVersion: 1, grid: { cols: 0, rows: 0 } })
+    const { entries, issues } = await listProjectEntries()
+    expect(entries).toHaveLength(1)
+    expect(entries[0].project.name).toBe('好的')
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toContain('坏的')
+  })
+
+  it('IndexedDB 里的对象和工程文件同一套校验：空档脏数据会被清', async () => {
+    const p = project('L 形')
+    p.layout = {
+      placements: [
+        { board: 'mini104', col: 0, row: 0 },
+        { board: 'mini52', col: 104, row: 0 },
+      ],
+      gapMm: 0,
+    }
+    const { deriveLayoutGeometry } = await import('../domain/board')
+    const geometry = deriveLayoutGeometry(p.layout)
+    p.grid = createGrid(geometry.cols, geometry.rows, 0xffff, geometry.placeable)
+    p.grid.cells[60 * geometry.cols + 120] = 5
+    await put('projects', p)
+    const [back] = await listProjects()
+    expect(back.grid.cells[60 * geometry.cols + 120]).toBe(0xffff)
+  })
+})
+
+describe('回收站与“上次打开的工程”（P2-08）', () => {
+  it('删除会清掉“上次打开”，不会再自动恢复回来', async () => {
+    const p = project('删掉就别回来')
+    await putProject(p)
+    rememberLastProject(p.id)
+    await trashProject(p.id)
+    expect(lastProjectId()).toBeNull()
+    await clearDraft(p.id)
+    expect(await restoreLastProject()).toBeUndefined()
+  })
+
+  it('彻底删除也会清掉指针', async () => {
+    const p = project('彻底删')
+    await putProject(p)
+    rememberLastProject(p.id)
+    await purgeProject(p.id)
+    expect(lastProjectId()).toBeNull()
+  })
+
+  it('已经进了回收站的工程不会被自动恢复', async () => {
+    const p = project('回收站里')
+    await putProject(p)
+    await trashProject(p.id)
+    rememberLastProject(p.id)
+    expect(await restoreLastProject()).toBeUndefined()
   })
 })

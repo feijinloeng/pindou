@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { analyzeSource } from './analyze'
-import { BG_THRESHOLD, findSubjectBox, removeBackground, sampleCornerColor, shouldCrop } from './background'
+import { BG_THRESHOLD, MIN_BG_CONFIDENCE, findSubjectBox, removeBackground, sampleBackground, sampleCornerColor, shouldCrop } from './background'
 import { mergeSmallComponents, majorityFilter } from './cleanup'
 import { DEMO_PALETTE_RGB } from './testPalette'
 import { checkerImage, dotImage, solidImage, toRgbBuffer } from './testImages'
 import { convert, DEFAULT_SETTINGS, type ConversionSettings } from './convert'
+import { EMPTY } from '../domain/grid'
 import { ciede2000, rgbToLab, type Rgb } from './colorDistance'
 import { downscale, downscaleAverage, downscaleDominant, fitToAspect } from './downscale'
 import { limitColors } from './limitColors'
@@ -193,6 +194,31 @@ describe('限色与关键色保护', () => {
     }
   })
 
+  it('maxColors 是硬上限：关键色再多也只留 N 个', () => {
+    const usage = new Uint32Array(DEMO_PALETTE_RGB.length)
+    usage[0] = 5 // 黑描边（用量很小但关键）
+    usage[1] = 900 // 白（大面积）
+    for (let i = 2; i < 8; i++) usage[i] = 100
+    const one = limitColors(usage, entries, { maxColors: 1, mustKeep: [0, 1] })
+    expect(one.keep).toHaveLength(1)
+    expect(one.keep[0]).toBe(1) // 名额只够一个时留用量大的
+    expect(one.dropped).toHaveLength(7)
+    for (const index of one.dropped) expect(one.remap.get(index)).toBe(1)
+
+    const two = limitColors(usage, entries, { maxColors: 2, mustKeep: [0, 1] })
+    expect(two.keep).toHaveLength(2)
+  })
+
+  it('maxColors=0 表示不限制，一个都不删', () => {
+    const usage = new Uint32Array(DEMO_PALETTE_RGB.length)
+    usage[0] = 1
+    usage[5] = 1
+    usage[9] = 1
+    const result = limitColors(usage, entries, { maxColors: 0 })
+    expect(result.dropped).toEqual([])
+    expect(result.keep).toHaveLength(3)
+  })
+
   it('用量没超上限时一个都不删', () => {
     const usage = new Uint32Array(DEMO_PALETTE_RGB.length)
     usage[0] = 10
@@ -309,6 +335,110 @@ describe('去背景', () => {
     const box = findSubjectBox(img, WHITE, BG_THRESHOLD)
     expect(shouldCrop(box!, 100, 100)).toBe(false)
   })
+
+  it('背景采样看四条边，主体贴着边也不取错背景色（P2-14）', () => {
+    // 黑方块占掉左上角：角落采样里混进了主体，四边采样仍然拿到白色
+    const img = dotImage(100, 100, WHITE, BLACK, 0, 0, 40, 40)
+    const sample = sampleBackground(img)
+    expect(sample.rgb).toEqual([255, 255, 255])
+    expect(sample.confidence).toBeGreaterThanOrEqual(MIN_BG_CONFIDENCE)
+  })
+
+  it('渐变背景置信度低：宁可报不可靠，也不默默误裁', () => {
+    const img = solidImage(100, 100, WHITE)
+    for (let y = 0; y < 100; y++) {
+      for (let x = 0; x < 100; x++) {
+        const i = (y * 100 + x) * 4
+        const v = 40 + Math.round((x / 99) * 200)
+        img.data[i] = v
+        img.data[i + 1] = v
+        img.data[i + 2] = v
+      }
+    }
+    expect(sampleBackground(img).confidence).toBeLessThan(MIN_BG_CONFIDENCE)
+  })
+})
+
+describe('自动策略（P2-12）与分析结果互', () => {
+  it('选了自动时，分析结果真的决定了用哪一档', () => {
+    // 彩色块图 → 像素画（黑白条纹会被内容分析判成线稿，那是线稿档的合理归属）
+    const pixelArt = checkerImage(104, 104, [255, 0, 0], WHITE, 16)
+    const photo = solidImage(104, 104, WHITE)
+    for (let y = 0; y < 104; y++) {
+      for (let x = 0; x < 104; x++) {
+        const i = (y * 104 + x) * 4
+        const v = Math.round((x / 103) * 255)
+        photo.data[i] = v
+        photo.data[i + 1] = 200 - Math.round((y / 103) * 100)
+        photo.data[i + 2] = 255 - v
+      }
+    }
+    const run = (image: typeof pixelArt) =>
+      convert({
+        image,
+        paletteColors: DEMO_PALETTE_RGB,
+        cols: 26,
+        rows: 26,
+        settings: { ...DEFAULT_SETTINGS, strategyId: 'auto', cropToSubject: false },
+      })
+    expect(run(pixelArt).strategyUsed).toBe('pixelart')
+    expect(run(photo).strategyUsed).toBe('general')
+  })
+
+  it('黑白线条图 → 自动选线稿档（document 也归线稿那套参数）', () => {
+    const img = solidImage(104, 104, WHITE)
+    for (let y = 0; y < 104; y += 8) {
+      for (let x = 8; x < 96; x++) {
+        const i = (y * 104 + x) * 4
+        img.data[i] = 0
+        img.data[i + 1] = 0
+        img.data[i + 2] = 0
+      }
+    }
+    const result = convert({
+      image: img,
+      paletteColors: DEMO_PALETTE_RGB,
+      cols: 26,
+      rows: 26,
+      settings: { ...DEFAULT_SETTINGS, strategyId: 'auto', cropToSubject: false },
+    })
+    expect(result.analysis.kind).toBe('lineart')
+    expect(result.strategyUsed).toBe('lineart')
+  })
+
+  it('手动指定时分析结果不搶方向', () => {
+    const photo = checkerImage(104, 104, WHITE, RED, 4)
+    const result = convert({
+      image: photo,
+      paletteColors: DEMO_PALETTE_RGB,
+      cols: 26,
+      rows: 26,
+      settings: { ...DEFAULT_SETTINGS, strategyId: 'cartoon', cropToSubject: false },
+    })
+    expect(result.strategyUsed).toBe('cartoon')
+  })
+
+  it('低置信度背景：自动裁切停下来并告知，而不是默默误裁', () => {
+    const img = solidImage(104, 104, WHITE)
+    for (let y = 0; y < 104; y++) {
+      for (let x = 0; x < 104; x++) {
+        const i = (y * 104 + x) * 4
+        const v = 40 + Math.round((x / 103) * 200)
+        img.data[i] = v
+        img.data[i + 1] = v
+        img.data[i + 2] = v
+      }
+    }
+    const result = convert({
+      image: img,
+      paletteColors: DEMO_PALETTE_RGB,
+      cols: 26,
+      rows: 26,
+      settings: { ...DEFAULT_SETTINGS, strategyId: 'pixelart', cropToSubject: true },
+    })
+    expect(result.cropSkipped).toBe(true)
+    expect(result.cropped).toBe(false)
+  })
 })
 
 describe('整条链路', () => {
@@ -417,5 +547,33 @@ describe('整条链路', () => {
     })
     expect(seen.length).toBeGreaterThan(4)
     expect(seen.at(-1)?.[1]).toBe(1)
+  })
+
+  it('clearExisting=false：底图填回空格，且底图上的色算进 usedIndexes', () => {
+    const img = dotImage(104, 104, WHITE, BLACK, 40, 40, 24, 24)
+    const base = {
+      image: img,
+      paletteColors: DEMO_PALETTE_RGB,
+      cols: 26,
+      rows: 26,
+      settings: settings({
+        strategyId: 'pixelart' as const,
+        maxColors: 0,
+        cropToSubject: false,
+        removeBackground: true,
+      }),
+    }
+    expect(convert(base).cells[0]).toBe(EMPTY) // 清空时角落是空的
+
+    const existing = new Uint16Array(26 * 26).fill(3)
+    const kept = convert({
+      ...base,
+      settings: { ...base.settings, clearExisting: false },
+      existing,
+    })
+    expect(kept.cells[0]).toBe(3)
+    expect(kept.cells).not.toContain(EMPTY)
+    expect(kept.usedIndexes).toContain(3)
+    expect(existing[0]).toBe(3) // 底图只读，不被改写
   })
 })

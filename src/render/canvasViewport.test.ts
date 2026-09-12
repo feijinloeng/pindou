@@ -4,6 +4,7 @@ import {
   CODE_ZOOM,
   clampZoom,
   fitViewport,
+  fitViewportToRegion,
   screenToCell,
   snapZoom,
   MAX_ZOOM,
@@ -132,5 +133,36 @@ describe('滚轮缩放', () => {
   it('缩到底也不会越过上下限', () => {
     expect(zoomFromWheel(base, 100000, false, 0, 0).zoom).toBe(MIN_ZOOM)
     expect(zoomFromWheel(base, -100000, false, 0, 0).zoom).toBe(MAX_ZOOM)
+  })
+})
+
+describe('推荐区域时的视口（跟做模式）', () => {
+  it('当前缩放过大时会缩下来，不会卡在过大', () => {
+    const next = fitViewportToRegion(vp(40, -100, -100), { c0: 0, r0: 0, c1: 5, r1: 5 }, 800, 600, 200, 200)
+    // 目标跨度 = 5 + 25 = 30 格，800/30 与 600/30 取小 = 20
+    expect(next.zoom).toBeCloseTo(20, 6)
+    expect(next.zoom).toBeLessThan(40)
+  })
+
+  it('当前缩放过小时会放大（小区域也能看清）', () => {
+    const next = fitViewportToRegion(vp(0.2), { c0: 10, r0: 10, c1: 12, r1: 12 }, 800, 600, 200, 200)
+    expect(next.zoom).toBeGreaterThan(0.2)
+  })
+
+  it('目标外接框靠近边缘时视口仍被夹在画布内', () => {
+    const cols = 200
+    const rows = 200
+    const next = fitViewportToRegion(vp(3), { c0: 0, r0: 0, c1: 2, r1: 2 }, 400, 300, cols, rows)
+    const w = cols * next.zoom
+    const h = rows * next.zoom
+    expect(next.panX).toBeLessThanOrEqual(400 - 64 + 1e-6)
+    expect(next.panY).toBeLessThanOrEqual(300 - 64 + 1e-6)
+    expect(next.panX).toBeGreaterThanOrEqual(Math.min(64, 400 - w - 64) - 1e-6)
+    expect(next.panY).toBeGreaterThanOrEqual(Math.min(64, 300 - h - 64) - 1e-6)
+  })
+
+  it('画布还没有尺寸时原样返回（不能把视口算成 NaN）', () => {
+    const current = vp(5)
+    expect(fitViewportToRegion(current, { c0: 0, r0: 0, c1: 1, r1: 1 }, 0, 0, 100, 100)).toBe(current)
   })
 })

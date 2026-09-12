@@ -12,6 +12,8 @@ export interface ConvertRequest {
   cols: number
   rows: number
   settings: ConversionSettings
+  /** 已有画布内容，clearExisting=false 时当底图 */
+  existing?: Uint16Array
 }
 
 export type ConvertResponse =
@@ -23,6 +25,10 @@ export type ConvertResponse =
       usedIndexes: number[]
       droppedIndexes: number[]
       kindOfSource: ConvertResult['analysis']['kind']
+      strategyUsed: ConvertResult['strategyUsed']
+      ditherUsed: number
+      backgroundConfidence: number
+      cropSkipped: boolean
       quantizedColorCount: number
       cropped: boolean
       ms: number
@@ -47,6 +53,7 @@ scope.onmessage = (event) => {
       cols: req.cols,
       rows: req.rows,
       settings: req.settings,
+      existing: req.existing,
       onProgress: (stage, ratio) => {
         scope.postMessage({ id: req.id, kind: 'progress', stage, ratio } satisfies ConvertResponse)
       },
@@ -58,6 +65,10 @@ scope.onmessage = (event) => {
       usedIndexes: result.usedIndexes,
       droppedIndexes: result.droppedIndexes,
       kindOfSource: result.analysis.kind,
+      strategyUsed: result.strategyUsed,
+      ditherUsed: result.ditherUsed,
+      backgroundConfidence: result.backgroundConfidence,
+      cropSkipped: result.cropSkipped,
       quantizedColorCount: result.analysis.quantizedColorCount,
       cropped: result.cropped,
       ms: Math.round(performance.now() - started),

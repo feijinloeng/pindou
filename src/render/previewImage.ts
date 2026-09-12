@@ -1,4 +1,4 @@
-import { EMPTY, type CellGrid } from '../domain/grid'
+import { EMPTY, isPlaceable, type CellGrid } from '../domain/grid'
 import { type Palette, shadeHex } from '../domain/palette'
 
 /**
@@ -63,8 +63,9 @@ export function drawPreview(ctx: CanvasRenderingContext2D, options: PreviewOptio
   for (let y = 0; y < grid.rows; y++) {
     const cy = (y + 0.5) * z
     for (let x = 0; x < grid.cols; x++) {
-      const value = grid.cells[y * grid.cols + x]
-      if (value === EMPTY) continue
+      const index = y * grid.cols + x
+      const value = grid.cells[index]
+      if (value === EMPTY || !isPlaceable(grid, index)) continue
       const color = palette.colors[value]
       if (!color) continue
       const cx = (x + 0.5) * z

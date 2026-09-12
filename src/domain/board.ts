@@ -56,6 +56,17 @@ export const BOARD_PROFILES: Record<BoardTypeId, BoardProfile> = {
   midi29: { id: 'midi29', pegs: 29, pitchMm: 5, outerMm: 145.0, label: '5mm · 29×29' },
 }
 
+/**
+ * 板型查表。板型 id 来自工程文件（外部输入），查不到要能结构化报错，
+ * 不能让 `BOARD_PROFILES[undefined]` 抛 TypeError 糊到用户脸上。
+ */
+export function findBoardProfile(id: unknown): BoardProfile | null {
+  if (typeof id !== 'string') return null
+  return Object.prototype.hasOwnProperty.call(BOARD_PROFILES, id)
+    ? BOARD_PROFILES[id as BoardTypeId]
+    : null
+}
+
 /** 画布上限：约 2236²，5.8m × 5.8m @2.6mm */
 export const MAX_CELLS = 5_000_000
 /** 超过这个数提示用户"建议改用 5mm 豆" */
@@ -74,8 +85,8 @@ export interface BoardArray {
 }
 
 export interface BoardRect {
-  row: number
-  col: number
+  /** 用户可见的稳定序号（0 起），只用于命名和标注，不是行列坐标 */
+  index: number
   board: BoardTypeId
   c0: number
   r0: number
@@ -95,6 +106,11 @@ export interface BoardGeometry {
   seamRows: number[]
   /** 每块板在豆格坐标里的矩形，用于"按板导出"和画板框 */
   boards: BoardRect[]
+  /**
+   * 板与板之间的实际缝隙（mm）。豆格坐标里板是紧挨着的，缝只体现在物理尺寸上：
+   * 每跨过一条板缝，物理长度就多一个 gapMm。打印 1:1 和买板都按它算。
+   */
+  gapMm: number
   /**
    * 哪些格子底下有板（1 = 有，0 = 空档）。
    * 自由拼板时外接矩形里会有空档，那些格子不属于作品：
@@ -121,11 +137,18 @@ export interface BoardLayout {
   gapMm: number
 }
 
+/** 尺寸相关的错误，矩阵板阵和自由摆放共用 */
+type SizeError =
+  | { kind: 'bad-size'; cols: number; rows: number }
+  | { kind: 'too-large'; cols: number; rows: number; max: number }
+
 export type BoardLayoutError =
   | { kind: 'empty' }
+  | { kind: 'unknown-board'; board: string }
+  | { kind: 'bad-placement'; placement: BoardPlacement }
   | { kind: 'mixed-pitch'; pitches: number[] }
   | { kind: 'overlap'; first: BoardPlacement; second: BoardPlacement }
-  | { kind: 'too-large'; cols: number; rows: number; max: number }
+  | SizeError
 
 /** 矩阵板阵 → 自由摆放列表（老工程和预设走这条路） */
 export function placementsFromArray(array: BoardArray): BoardPlacement[] {
@@ -145,6 +168,12 @@ export function describeLayoutError(err: BoardLayoutError): string {
   switch (err.kind) {
     case 'empty':
       return '还没放板子：先在左边点一个型号，拖到中间的台面上'
+    case 'unknown-board':
+      return `不认识这个板型：${err.board}`
+    case 'bad-placement':
+      return `板的位置必须是整数格坐标：col ${err.placement.col} / row ${err.placement.row}`
+    case 'bad-size':
+      return `板阵尺寸不合法：${err.cols} × ${err.rows}`
     case 'mixed-pitch':
       return `不能混用不同针距的板：${err.pitches.map((p) => `${p}mm`).join(' / ')}`
     case 'overlap':
@@ -155,29 +184,50 @@ export function describeLayoutError(err: BoardLayoutError): string {
 }
 
 /**
- * 自由摆放的校验：不空 / 同针距 / 不重叠 / 不超上限。
- * 重叠检查顺便把 placeable 遮罩建出来，所以和推导几何合并成一次扫描。
+ * 摆放列表的结构校验：不空 / 板型认识 / 坐标是整数 / 同针距 / 尺寸在范围内。
+ * 只扫板数，不扫格子，所以放在推导几何前面当下水道足够便宜。
  */
-export function deriveLayoutGeometry(layout: BoardLayout): BoardGeometry {
-  const placements = layout.placements
-  if (placements.length === 0) throw new Error(describeLayoutError({ kind: 'empty' }))
-
-  const pitches = [...new Set(placements.map((p) => BOARD_PROFILES[p.board].pitchMm))]
-  if (pitches.length > 1) {
-    throw new Error(describeLayoutError({ kind: 'mixed-pitch', pitches }))
-  }
+export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
+  const placements = layout?.placements
+  if (!Array.isArray(placements) || placements.length === 0) return { kind: 'empty' }
 
   let cols = 0
   let rows = 0
+  const pitches = new Set<number>()
+  for (const placement of placements) {
+    const profile = findBoardProfile(placement?.board)
+    if (!profile) return { kind: 'unknown-board', board: String(placement?.board) }
+    if (!Number.isInteger(placement.col) || !Number.isInteger(placement.row)) {
+      return { kind: 'bad-placement', placement }
+    }
+    if (placement.col < 0 || placement.row < 0) {
+      return { kind: 'bad-placement', placement }
+    }
+    pitches.add(profile.pitchMm)
+    cols = Math.max(cols, placement.col + profile.pegs)
+    rows = Math.max(rows, placement.row + profile.pegs)
+  }
+  if (pitches.size > 1) return { kind: 'mixed-pitch', pitches: [...pitches] }
+
+  return checkCanvasCells(cols, rows)
+}
+
+/**
+ * 自由摆放的校验：结构合法 / 不重叠 / 不超上限。
+ * 重叠检查顺便把 placeable 遮罩建出来，所以和推导几何合并成一次扫描。
+ */
+export function deriveLayoutGeometry(layout: BoardLayout): BoardGeometry {
+  const invalid = validateLayout(layout)
+  if (invalid) throw new Error(describeLayoutError(invalid))
+
+  const placements = layout.placements
+  let cols = 0
+  let rows = 0
   for (const p of placements) {
-    const pegs = BOARD_PROFILES[p.board].pegs
+    const pegs = findBoardProfile(p.board)!.pegs
     cols = Math.max(cols, p.col + pegs)
     rows = Math.max(rows, p.row + pegs)
-    if (p.col < 0 || p.row < 0) throw new Error('板的位置不能是负数')
   }
-
-  const size = checkCanvasCells(cols, rows)
-  if (size) throw new Error(describeLayoutError({ kind: 'too-large', cols, rows, max: MAX_CELLS }))
 
   const placeable = new Uint8Array(cols * rows)
   /** 每格属于第几块板，用来查重叠和算板缝 */
@@ -185,7 +235,7 @@ export function deriveLayoutGeometry(layout: BoardLayout): BoardGeometry {
   const boards: BoardRect[] = []
   for (let i = 0; i < placements.length; i++) {
     const p = placements[i]
-    const pegs = BOARD_PROFILES[p.board].pegs
+    const pegs = findBoardProfile(p.board)!.pegs
     for (let y = p.row; y < p.row + pegs; y++) {
       const base = y * cols
       for (let x = p.col; x < p.col + pegs; x++) {
@@ -199,7 +249,7 @@ export function deriveLayoutGeometry(layout: BoardLayout): BoardGeometry {
         placeable[base + x] = 1
       }
     }
-    boards.push({ row: 0, col: i, board: p.board, c0: p.col, r0: p.row, cw: pegs, rh: pegs })
+    boards.push({ index: i, board: p.board, c0: p.col, r0: p.row, cw: pegs, rh: pegs })
   }
 
   // 贯穿整幅的板缝：某一个 x 在【每一行】上都是板与板的分界。
@@ -227,23 +277,32 @@ export function deriveLayoutGeometry(layout: BoardLayout): BoardGeometry {
   return {
     cols,
     rows,
-    pitchMm: pitches[0],
+    pitchMm: findBoardProfile(placements[0].board)!.pitchMm,
     seamCols: [...verticalCuts].sort((a, b) => a - b),
     seamRows: [...horizontalCuts].sort((a, b) => a - b),
     boards,
+    gapMm: typeof layout.gapMm === 'number' && Number.isFinite(layout.gapMm) ? layout.gapMm : 0,
     placeable,
   }
 }
 
 export type BoardArrayError =
   | { kind: 'empty' }
+  | { kind: 'unknown-board'; board: string }
+  | { kind: 'ragged'; row: number }
   | { kind: 'mixed-pitch'; pitches: number[] }
   | { kind: 'row-mismatch'; row: number; expected: number; got: number }
   | { kind: 'row-height-mismatch'; row: number; col: number }
-  | { kind: 'too-large'; cols: number; rows: number; max: number }
+  | SizeError
 
-/** 格数上限检查。1153² 通过，2237² 报错。 */
-export function checkCanvasCells(cols: number, rows: number): BoardArrayError | null {
+/**
+ * 尺寸检查：必须是正整数，再谈上限。
+ * 只查上限的话，0 / 负数 / 小数 / NaN 都能混进几何算法，最后在别处炸。
+ */
+export function checkCanvasCells(cols: number, rows: number): SizeError | null {
+  if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) {
+    return { kind: 'bad-size', cols, rows }
+  }
   if (cols * rows > MAX_CELLS) return { kind: 'too-large', cols, rows, max: MAX_CELLS }
   return null
 }
@@ -257,15 +316,27 @@ export function checkCanvasCells(cols: number, rows: number): BoardArrayError | 
  * 前三条过了之后，第 3.1 节说的"每列钉数和相等"自动成立（每列 = Σ 各带高）。
  */
 export function validateBoardArray(array: BoardArray): BoardArrayError | null {
-  const { rows } = array
-  if (rows.length === 0 || rows[0].length === 0) return { kind: 'empty' }
+  const rows = array?.rows
+  if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty' }
+
+  // 0. 每行都是数组。整个矩阵都空 = 空板阵，只有中间某行空 = 参差数组
+  for (let r = 0; r < rows.length; r++) {
+    if (!Array.isArray(rows[r])) return { kind: 'ragged', row: r }
+  }
+  if (rows.every((row) => row.length === 0)) return { kind: 'empty' }
+  for (let r = 0; r < rows.length; r++) {
+    if (rows[r].length === 0) return { kind: 'ragged', row: r }
+    for (const id of rows[r]) {
+      if (!findBoardProfile(id)) return { kind: 'unknown-board', board: String(id) }
+    }
+  }
 
   // 1. 同针距
-  const pitches = [...new Set(rows.flat().map((id) => BOARD_PROFILES[id].pitchMm))]
+  const pitches = [...new Set(rows.flat().map((id) => findBoardProfile(id)!.pitchMm))]
   if (pitches.length > 1) return { kind: 'mixed-pitch', pitches }
 
   // 2. 每行钉数和相等 → cols
-  const rowSums = rows.map((line) => line.reduce((n, id) => n + BOARD_PROFILES[id].pegs, 0))
+  const rowSums = rows.map((line) => line.reduce((n, id) => n + findBoardProfile(id)!.pegs, 0))
   const cols = rowSums[0]
   const badRow = rowSums.findIndex((n) => n !== cols)
   if (badRow >= 0) {
@@ -275,7 +346,7 @@ export function validateBoardArray(array: BoardArray): BoardArrayError | null {
   // 3. 同一行的板等高，否则那一带的右端会留空洞
   for (let r = 0; r < rows.length; r++) {
     const bad = rows[r].findIndex(
-      (id) => BOARD_PROFILES[id].pegs !== BOARD_PROFILES[rows[r][0]].pegs,
+      (id) => findBoardProfile(id)!.pegs !== findBoardProfile(rows[r][0])!.pegs,
     )
     if (bad >= 0) return { kind: 'row-height-mismatch', row: r, col: bad }
   }
@@ -284,15 +355,21 @@ export function validateBoardArray(array: BoardArray): BoardArrayError | null {
   return checkCanvasCells(cols, bandHeights(rows).reduce((a, b) => a + b, 0))
 }
 
-/** 每带高度（同一行等高，所以取该行第一块） */
+/** 每带高度（同一行等高，所以取该行第一块），并顺手把每行的豆格起点算出来 */
 function bandHeights(rows: BoardTypeId[][]): number[] {
-  return rows.map((line) => BOARD_PROFILES[line[0]].pegs)
+  return rows.map((line) => findBoardProfile(line[0])!.pegs)
 }
 
 export function describeBoardArrayError(err: BoardArrayError): string {
   switch (err.kind) {
     case 'empty':
       return '板阵是空的'
+    case 'unknown-board':
+      return `不认识这个板型：${err.board}`
+    case 'ragged':
+      return `第 ${err.row + 1} 行是空的或者不是板型数组`
+    case 'bad-size':
+      return `板阵尺寸不合法：${err.cols} × ${err.rows}`
     case 'mixed-pitch':
       return `不能混用不同针距的板：${err.pitches.join('mm / ')}mm`
     case 'row-mismatch':
@@ -312,7 +389,49 @@ export function deriveGeometry(array: BoardArray): BoardGeometry {
   return deriveLayoutGeometry({ placements: placementsFromArray(array), gapMm: array.gapMm })
 }
 
+interface BoardSpan {
+  start: number
+  size: number
+}
+
+/**
+ * 一条轴上的物理长度：豆格数 × 针距 + 跨过的板缝条数 × gapMm。
+ * 豆格坐标里板是紧挨着的（缝不占格子），所以缝只能在这里补回来，
+ * 否则 1:1 打印会比实物短一个缝宽 × 板数。
+ */
+function axisMm(spans: BoardSpan[], pitch: number, gap: number): number {
+  const cuts = new Set<number>()
+  for (const span of spans) {
+    if (span.start > 0) cuts.add(span.start)
+    cuts.add(span.start + span.size)
+  }
+  const sorted = [...cuts].sort((a, b) => a - b)
+  const end = sorted[sorted.length - 1] ?? 0
+  return end * pitch + Math.max(0, sorted.length - 1) * gap
+}
+
+/** 摆放列表的物理尺寸。作品库卡片用，不值得为一行摘要去分配 5M 的遮罩 */
+export function placementsSizeMm(
+  placements: BoardPlacement[],
+  gapMm = 0,
+): { w: number; h: number } {
+  const xs: BoardSpan[] = []
+  const ys: BoardSpan[] = []
+  let pitch = 2.6
+  for (const placement of placements) {
+    const profile = findBoardProfile(placement?.board)
+    if (!profile) continue
+    pitch = profile.pitchMm
+    xs.push({ start: placement.col, size: profile.pegs })
+    ys.push({ start: placement.row, size: profile.pegs })
+  }
+  return { w: axisMm(xs, pitch, gapMm), h: axisMm(ys, pitch, gapMm) }
+}
+
 /** 板阵的物理尺寸（mm），用于界面上显示"拼出来多大" */
 export function layoutSizeMm(geom: BoardGeometry): { w: number; h: number } {
-  return { w: geom.cols * geom.pitchMm, h: geom.rows * geom.pitchMm }
+  return {
+    w: axisMm(geom.boards.map((b) => ({ start: b.c0, size: b.cw })), geom.pitchMm, geom.gapMm),
+    h: axisMm(geom.boards.map((b) => ({ start: b.r0, size: b.rh })), geom.pitchMm, geom.gapMm),
+  }
 }

@@ -1,15 +1,24 @@
 import { unzlibSync, zlibSync } from 'fflate'
 
 import {
-  BOARD_PROFILES,
+  DEFAULT_PALETTE_ID,
+  findPalette,
+  getPalette,
+} from '../data/palettes'
+import {
   deriveLayoutGeometry,
+  describeLayoutError,
   placementsFromArray,
+  placementsSizeMm,
+  validateLayout,
   type BoardArray,
   type BoardGeometry,
   type BoardLayout,
 } from './board'
 import { EMPTY, type CellGrid } from './grid'
 import type { ConversionSettings } from '../conversion/convert'
+import { DEFAULT_SETTINGS } from '../conversion/convert'
+import { STRATEGIES } from '../conversion/strategies'
 
 /** 工程文件必须带 schemaVersion 和迁移函数（第 3.3 节） */
 export const PROJECT_SCHEMA_VERSION = 1
@@ -50,23 +59,33 @@ export interface Project {
 }
 
 /** 磁盘上的形状：格子用压缩过的 base64 存，不是 JSON 数组 */
+interface StoredGrid {
+  cols: number
+  rows: number
+  /** 文件格式：zlib 压缩后的 Uint16Array，base64 */
+  data?: string
+  encoding?: string
+  /** IndexedDB 格式：结构化克隆直接把 Uint16Array 存下来 */
+  cells?: unknown
+}
+
 interface StoredProject extends Omit<Project, 'grid' | 'schemaVersion'> {
   schemaVersion: number
-  grid: {
-    cols: number
-    rows: number
-    /** zlib 压缩后的 Uint16Array，base64 */
-    data: string
-    encoding: 'zlib-base64-u16'
-  }
+  grid: StoredGrid
 }
 
 /**
  * 从板阵几何统一恢复网格遮罩。
  * placeable 是布局推导出来的事实，不从磁盘单独信任一份可能过期的副本。
  * 同时清掉空档里的历史脏数据，避免旧工程把空档当成可用格子。
+ *
+ * 返回清掉了几格：调用方要能把“这份文件本来就有脏数据”告诉用户，
+ * 而不是默默修完了当没事发生。
  */
-export function normalizeGridForLayout(grid: CellGrid, geometry: BoardGeometry): CellGrid {
+export function normalizeGridForLayout(
+  grid: CellGrid,
+  geometry: BoardGeometry,
+): { grid: CellGrid; cleared: number } {
   const expected = geometry.cols * geometry.rows
   if (
     grid.cols !== geometry.cols ||
@@ -78,14 +97,20 @@ export function normalizeGridForLayout(grid: CellGrid, geometry: BoardGeometry):
     )
   }
   const cells = grid.cells.slice()
+  let cleared = 0
   for (let i = 0; i < cells.length; i++) {
-    if (geometry.placeable[i] !== 1) cells[i] = EMPTY
+    if (geometry.placeable[i] === 1) continue
+    if (cells[i] !== EMPTY) cleared++
+    cells[i] = EMPTY
   }
   return {
-    cols: geometry.cols,
-    rows: geometry.rows,
-    cells,
-    placeable: geometry.placeable.slice(),
+    grid: {
+      cols: geometry.cols,
+      rows: geometry.rows,
+      cells,
+      placeable: geometry.placeable.slice(),
+    },
+    cleared,
   }
 }
 
@@ -119,7 +144,7 @@ function fromBase64(text: string): Uint8Array {
  */
 export function serializeProject(project: Project): string {
   const geometry = deriveLayoutGeometry(project.layout)
-  const grid = normalizeGridForLayout(project.grid, geometry)
+  const { grid } = normalizeGridForLayout(project.grid, geometry)
   const { cells } = grid
   const bytes = new Uint8Array(cells.buffer, cells.byteOffset, cells.byteLength)
   const stored: StoredProject = {
@@ -136,11 +161,119 @@ export function serializeProject(project: Project): string {
 
 const MAX_CELLS = 5_000_000
 
+/** 只认白名单里的编码：读到不认识的编码宁可拒绝，也不要猜怎么解 */
+const SUPPORTED_ENCODINGS = new Set(['zlib-base64-u16'])
+
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function isIsoDate(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 10 && Number.isFinite(Date.parse(value))
+}
+
+/** IndexedDB 里格子就是 Uint16Array；写成普通数组也认，坏数据不认 */
+function plainCells(value: unknown): Uint16Array {
+  if (value instanceof Uint16Array) return value.slice()
+  if (Array.isArray(value)) return Uint16Array.from(value as number[])
+  throw new Error('格子数据不是数组')
+}
+
+/** 多条“已经替你修好了”的提示拼成一条 —— 界面只有一个位置放它 */
+function joinNotes(notes: string[]): ParseError | null {
+  return notes.length > 0 ? { kind: 'recovered', message: notes.join('；') } : null
+}
+
+/** 视图设置：数值必须是有限正数，否则重置。视图坏了不值得拒绝整份工程 */
+function readView(raw: unknown, notes: string[]): ProjectView {
+  const view = (raw ?? {}) as Partial<ProjectView>
+  const zoom = finiteOr(view.zoom, 8)
+  const panX = finiteOr(view.panX, 0)
+  const panY = finiteOr(view.panY, 0)
+  const showCodes = typeof view.showCodes === 'boolean' ? view.showCodes : true
+  const clean =
+    zoom === view.zoom && panX === view.panX && panY === view.panY && showCodes === view.showCodes
+  if (!clean && raw !== undefined) notes.push('视图设置不规范，已修正')
+  return { zoom: zoom > 0 ? zoom : 8, panX, panY, showCodes }
+}
+
+function cleanMaking(making: Partial<MakingProgress>): boolean {
+  return (
+    (making.completedCodes === undefined || Array.isArray(making.completedCodes)) &&
+    (making.completedRegions === undefined ||
+      (typeof making.completedRegions === 'object' && !Array.isArray(making.completedRegions))) &&
+    (making.focusCode === undefined || making.focusCode === null || typeof making.focusCode === 'string') &&
+    (making.startedAt === undefined || making.startedAt === null || isIsoDate(making.startedAt))
+  )
+}
+
+function readMaking(raw: unknown, notes: string[]): MakingProgress {
+  const making = (raw ?? {}) as Partial<MakingProgress>
+  const completedCodes = Array.isArray(making.completedCodes)
+    ? making.completedCodes.filter((code): code is string => typeof code === 'string')
+    : []
+  const completedRegions: Record<string, number[]> = {}
+  const source = making.completedRegions
+  if (source && typeof source === 'object' && !Array.isArray(source)) {
+    for (const [code, value] of Object.entries(source)) {
+      if (Array.isArray(value)) completedRegions[code] = value.filter((n) => Number.isInteger(n))
+    }
+  }
+  const dropped =
+    completedCodes.length !== (making.completedCodes?.length ?? 0) ||
+    Object.keys(completedRegions).length !== Object.keys(making.completedRegions ?? {}).length
+  if (!cleanMaking(making) || dropped) notes.push('跟做进度里有坏数据，已清理')
+  return {
+    completedCodes,
+    completedRegions,
+    focusCode: typeof making.focusCode === 'string' ? making.focusCode : null,
+    startedAt: isIsoDate(making.startedAt) ? making.startedAt : null,
+  }
+}
+
+/** 色号白名单：不存在的色号要剔除，否则 UI 上会出现“看得见却用不了”的色号 */
+function readAllowedCodes(raw: unknown, paletteId: string, notes: string[]): string[] | null {
+  if (raw === null || raw === undefined) return null
+  if (!Array.isArray(raw)) {
+    notes.push('可用色号名单格式不对，已改成全部可用')
+    return null
+  }
+  const codes = getPalette(paletteId).colors.map((c) => c.code)
+  const known = new Set(codes)
+  const kept = raw.filter((code): code is string => typeof code === 'string' && known.has(code))
+  if (kept.length !== raw.length) notes.push('可用色号名单里有不存在的色号，已剔除')
+  if (kept.length === 0 || kept.length === codes.length) return null
+  return kept
+}
+
+function readConversion(raw: unknown, notes: string[]): ConversionSettings | null {
+  if (raw === null || raw === undefined) return null
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    notes.push('转换参数读不出来，已重置')
+    return null
+  }
+  const value = raw as Partial<ConversionSettings>
+  if (!Object.prototype.hasOwnProperty.call(STRATEGIES, String(value.strategyId))) {
+    notes.push(`转换策略“${String(value.strategyId)}”不存在，已重置转换参数`)
+    return null
+  }
+  const count = (v: unknown, fallback: number) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : fallback
+  return {
+    strategyId: value.strategyId as ConversionSettings['strategyId'],
+    maxColors: count(value.maxColors, DEFAULT_SETTINGS.maxColors),
+    dither: value.dither === null || value.dither === undefined ? null : count(value.dither, 0),
+    cropToSubject: value.cropToSubject !== false,
+    removeBackground: value.removeBackground === true,
+    clearExisting: value.clearExisting !== false,
+    fit: value.fit === 'contain' || value.fit === 'stretch' ? value.fit : 'cover',
+  }
+}
+
 /**
  * 读：校验 schemaVersion → 迁移 → 校验格数 / 数组长度 / 色号。
  * 任一项不通过就明确报错，不静默修复（第 14.3 节）。
- */
-/**
+ *
  * @param paletteSize 当前色板的颜色数。给了就校验格子里的索引没越界
  *                    （坏文件最典型的两种：格数超上限、引用了不存在的色号）
  */
@@ -151,11 +284,24 @@ export function parseProject(text: string, paletteSize?: number): ParseResult {
   } catch {
     return { project: null, error: { kind: 'fatal', message: '文件不是合法的 JSON' } }
   }
+  return validateProject(raw, paletteSize)
+}
+
+/**
+ * 工程对象的唯一入口校验。三条读路径共用：工程文件导入、IndexedDB 读取、复制。
+ *
+ * 结构性错误（版本 / 格数 / 解码 / 板阵 / 色板 id）直接拒绝；
+ * 可修的字段（时间戳 / 视图 / 跟做进度 / 越界白名单 / 空档脏数据）就地修好，
+ * 并在 error.message 里说清楚改了什么。
+ */
+export function validateProject(raw: unknown, paletteSize?: number): ParseResult {
   if (!raw || typeof raw !== 'object') {
     return { project: null, error: { kind: 'fatal', message: '文件内容不是一个工程对象' } }
   }
   const stored = raw as Partial<StoredProject>
-  if (typeof stored.schemaVersion !== 'number') {
+  const notes: string[] = []
+
+  if (typeof stored.schemaVersion !== 'number' || !Number.isFinite(stored.schemaVersion)) {
     return { project: null, error: { kind: 'fatal', message: '缺少 schemaVersion，无法确认版本' } }
   }
   if (stored.schemaVersion > PROJECT_SCHEMA_VERSION) {
@@ -167,17 +313,39 @@ export function parseProject(text: string, paletteSize?: number): ParseResult {
       },
     }
   }
-  let recovered: string | null = null
   if (stored.schemaVersion < PROJECT_SCHEMA_VERSION) {
-    recovered = `工程从 v${stored.schemaVersion} 迁移到 v${PROJECT_SCHEMA_VERSION}`
+    notes.push(`工程从 v${stored.schemaVersion} 迁移到 v${PROJECT_SCHEMA_VERSION}`)
   }
 
   const grid = stored.grid
-  if (!grid || typeof grid.cols !== 'number' || typeof grid.rows !== 'number') {
+  if (!grid || typeof grid !== 'object') {
     return { project: null, error: { kind: 'fatal', message: '工程缺少画布尺寸' } }
   }
+  if (grid.encoding !== undefined && !SUPPORTED_ENCODINGS.has(String(grid.encoding))) {
+    return {
+      project: null,
+      error: { kind: 'fatal', message: `不支持的格子编码：${String(grid.encoding)}` },
+    }
+  }
+  if (
+    !Number.isInteger(grid.cols) ||
+    !Number.isInteger(grid.rows) ||
+    grid.cols <= 0 ||
+    grid.rows <= 0
+  ) {
+    return {
+      project: null,
+      error: {
+        kind: 'fatal',
+        message: `画布尺寸必须是正整数：${String(grid.cols)} × ${String(grid.rows)}`,
+      },
+    }
+  }
+  if (typeof grid.data !== 'string' && grid.cells === undefined) {
+    return { project: null, error: { kind: 'fatal', message: '工程缺少格子数据' } }
+  }
   const cells = grid.cols * grid.rows
-  if (!Number.isFinite(cells) || cells <= 0 || cells > MAX_CELLS) {
+  if (cells > MAX_CELLS) {
     return {
       project: null,
       error: { kind: 'fatal', message: `画布格数 ${cells} 超出范围（上限 ${MAX_CELLS}）` },
@@ -186,20 +354,35 @@ export function parseProject(text: string, paletteSize?: number): ParseResult {
 
   let restored: CellGrid
   try {
-    const bytes = unzlibSync(fromBase64(grid.data ?? ''))
-    if (bytes.byteLength !== cells * 2) {
-      return {
-        project: null,
-        error: {
-          kind: 'fatal',
-          message: `格子数据长度不对：期望 ${cells * 2} 字节，实际 ${bytes.byteLength} 字节`,
-        },
+    if (typeof grid.data === 'string') {
+      // 工程文件：zlib + base64
+      const bytes = unzlibSync(fromBase64(grid.data))
+      if (bytes.byteLength !== cells * 2) {
+        return {
+          project: null,
+          error: {
+            kind: 'fatal',
+            message: `格子数据长度不对：期望 ${cells * 2} 字节，实际 ${bytes.byteLength} 字节`,
+          },
+        }
       }
+      const owned = bytes.slice().buffer
+      restored = { cols: grid.cols, rows: grid.rows, cells: new Uint16Array(owned) }
+    } else {
+      // IndexedDB：已经没有压缩这一层，直接拿数组
+      restored = { cols: grid.cols, rows: grid.rows, cells: plainCells(grid.cells) }
     }
-    const owned = bytes.slice().buffer
-    restored = { cols: grid.cols, rows: grid.rows, cells: new Uint16Array(owned) }
   } catch {
     return { project: null, error: { kind: 'fatal', message: '格子数据解压失败，文件可能被截断' } }
+  }
+  if (restored.cells.length !== cells) {
+    return {
+      project: null,
+      error: {
+        kind: 'fatal',
+        message: `格子数据长度不对：期望 ${cells} 格，实际 ${restored.cells.length} 格`,
+      },
+    }
   }
 
   // 板阵：新格式是 layout（自由摆放），老格式是 boardArray（固定矩阵）
@@ -208,7 +391,14 @@ export function parseProject(text: string, paletteSize?: number): ParseResult {
     : stored.boardArray
       ? { placements: placementsFromArray(stored.boardArray as BoardArray), gapMm: (stored.boardArray as BoardArray).gapMm }
       : { placements: [], gapMm: 0 }
-  let geometry: ReturnType<typeof deriveLayoutGeometry>
+  const invalidLayout = validateLayout(layout)
+  if (invalidLayout) {
+    return {
+      project: null,
+      error: { kind: 'fatal', message: `板阵非法：${describeLayoutError(invalidLayout)}` },
+    }
+  }
+  let geometry: BoardGeometry
   try {
     geometry = deriveLayoutGeometry(layout)
   } catch (error) {
@@ -229,20 +419,34 @@ export function parseProject(text: string, paletteSize?: number): ParseResult {
       },
     }
   }
-  restored = normalizeGridForLayout(restored, geometry)
+  const normalized = normalizeGridForLayout(restored, geometry)
+  restored = normalized.grid
+  if (normalized.cleared > 0) {
+    notes.push(`板外的空档里有 ${normalized.cleared} 格脏数据，已清掉`)
+  }
 
-  if (!stored.paletteId) {
+  if (typeof stored.paletteId !== 'string' || !stored.paletteId) {
     return { project: null, error: { kind: 'fatal', message: '工程没写色板 id' } }
   }
-  if (paletteSize && paletteSize > 0) {
+  const palette = findPalette(stored.paletteId)
+  let paletteId = stored.paletteId
+  if (!palette) {
+    // 不静默回退：换个色板，色号会全部对不上，必须让用户看见
+    paletteId = DEFAULT_PALETTE_ID
+    notes.push(
+      `找不到色板 ${stored.paletteId}，已临时改用 ${getPalette(DEFAULT_PALETTE_ID).displayName}`,
+    )
+  }
+  const size = paletteSize && paletteSize > 0 ? paletteSize : (palette?.colors.length ?? 0)
+  if (size > 0) {
     for (let i = 0; i < restored.cells.length; i++) {
       const value = restored.cells[i]
-      if (value !== EMPTY && value >= paletteSize) {
+      if (value !== EMPTY && value >= size) {
         return {
           project: null,
           error: {
             kind: 'fatal',
-            message: `第 ${i} 格引用了不存在的色号（索引 ${value}，色板只有 ${paletteSize} 色）`,
+            message: `第 ${i} 格引用了不存在的色号（索引 ${value}，色板只有 ${size} 色）`,
           },
         }
       }
@@ -251,29 +455,21 @@ export function parseProject(text: string, paletteSize?: number): ParseResult {
 
   const project: Project = {
     schemaVersion: PROJECT_SCHEMA_VERSION,
-    id: stored.id ?? cryptoId(),
-    name: stored.name ?? '未命名作品',
-    customer: stored.customer ?? null,
-    createdAt: stored.createdAt ?? new Date().toISOString(),
-    updatedAt: stored.updatedAt ?? new Date().toISOString(),
+    id: typeof stored.id === 'string' && stored.id ? stored.id : cryptoId(),
+    name: typeof stored.name === 'string' && stored.name.trim() ? stored.name : '未命名作品',
+    customer: typeof stored.customer === 'string' && stored.customer ? stored.customer : null,
+    createdAt: isIsoDate(stored.createdAt) ? stored.createdAt : new Date().toISOString(),
+    updatedAt: isIsoDate(stored.updatedAt) ? stored.updatedAt : new Date().toISOString(),
     layout,
-    paletteId: stored.paletteId ?? 'mard-291',
-    allowedCodes: stored.allowedCodes ?? null,
+    paletteId,
+    allowedCodes: readAllowedCodes(stored.allowedCodes, paletteId, notes),
     grid: restored,
-    conversion: stored.conversion ?? null,
-    making: {
-      completedCodes: stored.making?.completedCodes ?? [],
-      completedRegions: stored.making?.completedRegions ?? {},
-      focusCode: stored.making?.focusCode ?? null,
-      startedAt: stored.making?.startedAt ?? null,
-    },
-    view: stored.view ?? { zoom: 8, panX: 0, panY: 0, showCodes: true },
+    conversion: readConversion(stored.conversion, notes),
+    making: readMaking(stored.making, notes),
+    view: readView(stored.view, notes),
   }
 
-  return {
-    project,
-    error: recovered ? { kind: 'recovered', message: recovered } : null,
-  }
+  return { project, error: joinNotes(notes) }
 }
 
 export function cryptoId(): string {
@@ -284,17 +480,11 @@ export function cryptoId(): string {
 
 /**
  * IndexedDB 里可能还躺着老版本写的工程（只有 boardArray，甚至两个字段都没有）。
- * 每一条读出来的工程都过一遍这里，别让缺失的 layout 漏到渲染层。
+ * 和工程文件走同一套校验，别让坏数据绕过导入那条路直接进运行时。
  */
-export function ensureLayout(project: Project): Project {
-  if (project.layout) return project
-  const array = project.boardArray
-  return {
-    ...project,
-    layout: array
-      ? { placements: placementsFromArray(array), gapMm: array.gapMm }
-      : { placements: [], gapMm: 0 },
-  }
+export function decodeStoredProject(value: unknown): Project | null {
+  const result = validateProject(value)
+  return result.project
 }
 
 export function createProject(options: {
@@ -334,8 +524,11 @@ export function createProject(options: {
 export function projectSummary(project: Project) {
   let used = 0
   const codes = new Set<number>()
-  for (const value of project.grid.cells) {
+  const placeable = project.grid.placeable
+  for (let i = 0; i < project.grid.cells.length; i++) {
+    const value = project.grid.cells[i]
     if (value === EMPTY) continue
+    if (placeable && placeable[i] !== 1) continue
     used++
     codes.add(value)
   }
@@ -344,15 +537,6 @@ export function projectSummary(project: Project) {
     beads: used,
     colorCount: codes.size,
     boardCount: project.layout.placements.length,
-    sizeMm: {
-      w: project.grid.cols * pitchOf(project.layout),
-      h: project.grid.rows * pitchOf(project.layout),
-    },
+    sizeMm: placementsSizeMm(project.layout.placements, project.layout.gapMm),
   }
-}
-
-/** 板阵用的针距（mm）。空板阵按 2.6mm 报 */
-function pitchOf(layout: BoardLayout): number {
-  const first = layout.placements[0]
-  return first ? BOARD_PROFILES[first.board].pitchMm : 2.6
 }

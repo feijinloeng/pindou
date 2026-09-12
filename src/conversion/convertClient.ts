@@ -1,5 +1,6 @@
 import type { Rgb } from './colorDistance'
 import type { ConversionSettings } from './convert'
+import type { StrategyId } from './strategies'
 import type { SourceImage } from './types'
 import type { ConvertRequest, ConvertResponse } from './worker'
 
@@ -8,6 +9,11 @@ export interface ConvertDone {
   usedIndexes: number[]
   droppedIndexes: number[]
   kindOfSource: 'lineart' | 'pixelart' | 'document' | 'photo'
+  /** 实际生效的策略（选了“自动”时由分析结果决定） */
+  strategyUsed: StrategyId
+  ditherUsed: number
+  backgroundConfidence: number
+  cropSkipped: boolean
   quantizedColorCount: number
   cropped: boolean
   ms: number
@@ -20,6 +26,8 @@ export interface ConvertJob {
   cols: number
   rows: number
   settings: ConversionSettings
+  /** 已有画布内容，clearExisting=false 时当底图；无底图就传 undefined */
+  existing?: Uint16Array
   /** 新输入开始时由调用方中止旧任务，防止旧结果回写 */
   signal?: AbortSignal
   onProgress?: (stage: string, ratio: number) => void
@@ -82,6 +90,7 @@ export function runConvert(job: ConvertJob): Promise<ConvertDone> {
     cols: job.cols,
     rows: job.rows,
     settings: job.settings,
+    existing: job.existing,
   }
 
   return new Promise<ConvertDone>((resolve, reject) => {
@@ -117,6 +126,10 @@ export function runConvert(job: ConvertJob): Promise<ConvertDone> {
           usedIndexes: message.usedIndexes,
           droppedIndexes: message.droppedIndexes,
           kindOfSource: message.kindOfSource,
+          strategyUsed: message.strategyUsed,
+          ditherUsed: message.ditherUsed,
+          backgroundConfidence: message.backgroundConfidence,
+          cropSkipped: message.cropSkipped,
           quantizedColorCount: message.quantizedColorCount,
           cropped: message.cropped,
           ms: message.ms,

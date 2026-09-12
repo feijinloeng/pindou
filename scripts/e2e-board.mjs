@@ -11,7 +11,9 @@
 import { rmSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const BASE = process.env.PINDOU_E2E_URL ?? 'http://localhost:5173'
+const CHROME =
+  process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const PORT = 9400 + Math.floor(Math.random() * 400)
 const PROFILE = '/tmp/pindou-e2e-board'
 
@@ -58,7 +60,7 @@ const check = (ok, label, detail = '') => {
   if (!ok) fail.push(label)
 }
 
-await send('Page.navigate', { url: 'http://localhost:5173/#/editor' })
+await send('Page.navigate', { url: `${BASE}/#/editor` })
 check((await waitFor(`!!document.querySelector('button[data-surface]') || !!document.querySelector('[data-surface]')`)) >= 0, '一进编辑器就是选板页（台面在）')
 check(
   (await js(`document.querySelectorAll('aside').length`)) >= 3,

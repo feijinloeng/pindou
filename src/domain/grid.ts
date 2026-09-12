@@ -58,22 +58,50 @@ export function cloneGrid(g: CellGrid): CellGrid {
   }
 }
 
-/** 非空格数量 */
+/**
+ * 这个格子底下有没有板。索引版（所有逐格循环都走它，空档就不会被统计/绘制）
+ */
+export function isPlaceable(g: CellGrid, index: number): boolean {
+  return !g.placeable || g.placeable[index] === 1
+}
+
+/** 非空格数量（空档不算） */
 export function usedCells(g: CellGrid): number {
   let n = 0
-  for (const v of g.cells) if (v !== EMPTY) n++
+  for (let i = 0; i < g.cells.length; i++) {
+    if (g.cells[i] !== EMPTY && isPlaceable(g, i)) n++
+  }
   return n
 }
 
-/** 每个色板索引被用了多少格。paletteSize 之外的索引会被忽略。 */
+/** 每个色板索引被用了多少格（空档和越界索引都不算）。paletteSize 之外的索引会被忽略。 */
 export function usageByIndex(g: CellGrid, paletteSize: number): Uint32Array {
   const out = new Uint32Array(paletteSize)
-  for (const v of g.cells) if (v < paletteSize) out[v]++
+  for (let i = 0; i < g.cells.length; i++) {
+    const v = g.cells[i]
+    if (v < paletteSize && isPlaceable(g, i)) out[v]++
+  }
   return out
 }
 
+/**
+ * 两个网格是否完全一样。
+ * 空档遮罩也要比 —— 格子值一样但空档不同，是两个不同的板阵，
+ * 只比 cells 会把真正的结构差异藏起来。
+ * placeable 缺省 = 全是板，所以缺省和全 1 视为相等。
+ */
 export function gridEquals(a: CellGrid, b: CellGrid): boolean {
   if (a.cols !== b.cols || a.rows !== b.rows) return false
+  if (a.cells.length !== b.cells.length) return false
   for (let i = 0; i < a.cells.length; i++) if (a.cells[i] !== b.cells[i]) return false
+  if (a.placeable && b.placeable) {
+    if (a.placeable.length !== b.placeable.length) return false
+    for (let i = 0; i < a.placeable.length; i++) {
+      if (a.placeable[i] !== b.placeable[i]) return false
+    }
+    return true
+  }
+  const only = a.placeable ?? b.placeable
+  if (only) for (let i = 0; i < only.length; i++) if (only[i] !== 1) return false
   return true
 }

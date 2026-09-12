@@ -8,8 +8,17 @@ import {
   type Rgb,
 } from './colorDistance'
 
-/** 预筛候选数：先用 Oklab 粗筛这么多，再逐个算 CIEDE2000 */
-export const PRE_FILTER = 8
+/**
+ * 预筛候选数：先用 Oklab 粗筛这么多，再逐个算 CIEDE2000。
+ *
+ * 8 不够：差分对照全量精算时错误率 2%，最差换错色 ΔE00≈29（看得出是另一个色）。
+ * 24 在同一组采样上 0 错，而 130 万格噪声图实测只多花 ~20%（1437ms → 1735ms）——
+ * 买错豆的代价比这点时间大。
+ *
+ * ponytail: 仍是近似。真要全量精算得先把 ciede2000 的三角函数预算出来，
+ * 否则 291 色全扫会让大图转换慢到分钟级。先用 PRE_FILTER=24 顶着。
+ */
+export const PRE_FILTER = 24
 
 export interface PaletteMatcher {
   /** 返回色板里的索引 */
@@ -105,6 +114,13 @@ export function createMatcher(colors: Rgb[], allowed?: boolean[]): PaletteMatche
 /**
  * Floyd–Steinberg 抖动，蛇形扫描。
  * strength = 0 就是纯最近色，不产生任何误差扩散。
+ *
+ * ⚠️ 误差扩散在 sRGB 的 0-255 值上做，不是线性光空间 —— 这是常见的工程近似：
+ * 按视觉上更“对”的做法应该先 srgbToLinear 再扩散，但那样每个像素都要
+ * 线性→sRGB 来回转，CPU 代价直接翻倍，而当前观感已经可接受。
+ * 注释/文档一律不要再声称“线性空间”（P2-16）。
+ *
+ * ponytail: 需要更准的过渡时再换成线性空间的扩散，并用样图做视觉回归。
  */
 export function matchWithDither(
   rgbData: Uint8ClampedArray,
@@ -114,7 +130,7 @@ export function matchWithDither(
   strength: number,
 ): Uint16Array {
   const out = new Uint16Array(width * height)
-  // 误差缓冲用浮点，别看 8bit；线性空间里的误差更接近视觉
+  // 误差缓冲用浮点，别看 8bit
   const errR = new Float32Array(width + 2)
   const errG = new Float32Array(width + 2)
   const errB = new Float32Array(width + 2)
