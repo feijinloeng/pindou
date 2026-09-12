@@ -1,0 +1,53 @@
+import raw from './palettes.json'
+
+import type { Palette } from '../domain/palette'
+import type { Rgb } from '../conversion/colorDistance'
+
+/**
+ * 构建产物（`scripts/build-palettes.ts` 生成）的读取与索引。
+ * 运行时不发任何网络请求 —— 离线可用（第 1 节决策 22）。
+ */
+export interface PaletteFile {
+  schema: string
+  schemaVersion: number
+  note: string
+  attribution: Array<{ repo: string; license: string; used: string }>
+  disclaimer: string
+  trademarks: string
+  palettes: Palette[]
+}
+
+export const PALETTE_FILE = raw as unknown as PaletteFile
+export const PALETTES: Palette[] = PALETTE_FILE.palettes
+export const DISCLAIMER = PALETTE_FILE.disclaimer
+export const TRADEMARKS = PALETTE_FILE.trademarks
+export const ATTRIBUTION = PALETTE_FILE.attribution
+
+export function getPalette(id: string): Palette {
+  return PALETTES.find((p) => p.id === id) ?? PALETTES[0]
+}
+
+export function paletteRgb(palette: Palette): Rgb[] {
+  return palette.colors.map((c) => c.rgb as Rgb)
+}
+
+/**
+ * 可用色遮罩：allowedCodes = null 表示全部可用。
+ * 顺序和 palette.colors 一致，直接喂给匹配器。
+ */
+export function allowedMask(palette: Palette, allowedCodes: string[] | null): boolean[] | undefined {
+  if (!allowedCodes) return undefined
+  const allowed = new Set(allowedCodes)
+  return palette.colors.map((c) => allowed.has(c.code))
+}
+
+/** 这个色板默认选哪个色（找个中间调的中性色，比纯黑好用） */
+export function defaultColorIndex(palette: Palette): number {
+  const index = palette.colors.findIndex((c) => c.code === 'H01')
+  if (index >= 0) return index
+  const dark = palette.colors.reduce(
+    (best, c, i) => (c.lab[0] < palette.colors[best].lab[0] ? i : best),
+    0,
+  )
+  return dark
+}
