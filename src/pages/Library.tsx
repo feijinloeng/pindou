@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { getPalette } from '../data/palettes'
 
+import { deriveLayoutGeometry } from '../domain/board'
+
 
 import {
   createProject,
+  normalizeGridForLayout,
   parseProject,
   projectSummary,
   serializeProject,
@@ -71,11 +74,7 @@ export default function Library() {
       name: `${project.name} 副本`,
       layout: project.layout,
       paletteId: project.paletteId,
-      grid: {
-        cols: project.grid.cols,
-        rows: project.grid.rows,
-        cells: project.grid.cells.slice(),
-      },
+      grid: normalizeGridForLayout(project.grid, deriveLayoutGeometry(project.layout)),
     })
     await putProject(clone)
     await refresh()

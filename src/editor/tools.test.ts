@@ -69,6 +69,21 @@ describe('油漆桶', () => {
     expect(grid.cells[4]).toBe(7)
   })
 
+  it('自由拼板的空档不会被重复搜索', () => {
+    const placeable = new Uint8Array(4 * 4)
+    // 一个 L 形台面：第一行和第一列可放豆，其余是空档。
+    for (let c = 0; c < 4; c++) placeable[c] = 1
+    for (let r = 0; r < 4; r++) placeable[r * 4] = 1
+    const grid = createGrid(4, 4, EMPTY, placeable)
+
+    const filled = floodFill(directSink(grid), grid, 0, 0, 2)
+
+    expect(filled).toBe(7)
+    expect([...grid.cells].filter((v) => v === 2)).toHaveLength(7)
+    expect(grid.cells[1 * 4 + 1]).toBe(EMPTY)
+    expect(grid.cells[3 * 4 + 3]).toBe(EMPTY)
+  })
+
   it('同色填充是空操作', () => {
     const grid = createGrid(3, 3, 2)
     expect(floodFill(directSink(grid), grid, 0, 0, 2)).toBe(0)

@@ -5,6 +5,7 @@ import {
   deriveLayoutGeometry,
   placementsFromArray,
   type BoardArray,
+  type BoardGeometry,
   type BoardLayout,
 } from './board'
 import { EMPTY, type CellGrid } from './grid'
@@ -60,6 +61,34 @@ interface StoredProject extends Omit<Project, 'grid' | 'schemaVersion'> {
   }
 }
 
+/**
+ * 从板阵几何统一恢复网格遮罩。
+ * placeable 是布局推导出来的事实，不从磁盘单独信任一份可能过期的副本。
+ * 同时清掉空档里的历史脏数据，避免旧工程把空档当成可用格子。
+ */
+export function normalizeGridForLayout(grid: CellGrid, geometry: BoardGeometry): CellGrid {
+  const expected = geometry.cols * geometry.rows
+  if (
+    grid.cols !== geometry.cols ||
+    grid.rows !== geometry.rows ||
+    grid.cells.length !== expected
+  ) {
+    throw new Error(
+      `板阵推出的是 ${geometry.cols}×${geometry.rows}，格子数据是 ${grid.cols}×${grid.rows}，对不上`,
+    )
+  }
+  const cells = grid.cells.slice()
+  for (let i = 0; i < cells.length; i++) {
+    if (geometry.placeable[i] !== 1) cells[i] = EMPTY
+  }
+  return {
+    cols: geometry.cols,
+    rows: geometry.rows,
+    cells,
+    placeable: geometry.placeable.slice(),
+  }
+}
+
 export type ParseError = { kind: 'fatal'; message: string } | { kind: 'recovered'; message: string }
 
 export interface ParseResult {
@@ -89,13 +118,15 @@ function fromBase64(text: string): Uint8Array {
  * 格式是原始的 U16 字节流（JS 引擎全是小端，跨端读也没问题）。
  */
 export function serializeProject(project: Project): string {
-  const { cells } = project.grid
+  const geometry = deriveLayoutGeometry(project.layout)
+  const grid = normalizeGridForLayout(project.grid, geometry)
+  const { cells } = grid
   const bytes = new Uint8Array(cells.buffer, cells.byteOffset, cells.byteLength)
   const stored: StoredProject = {
     ...project,
     grid: {
-      cols: project.grid.cols,
-      rows: project.grid.rows,
+      cols: grid.cols,
+      rows: grid.rows,
       data: toBase64(zlibSync(bytes, { level: 6 })),
       encoding: 'zlib-base64-u16',
     },
@@ -198,6 +229,7 @@ export function parseProject(text: string, paletteSize?: number): ParseResult {
       },
     }
   }
+  restored = normalizeGridForLayout(restored, geometry)
 
   if (!stored.paletteId) {
     return { project: null, error: { kind: 'fatal', message: '工程没写色板 id' } }
@@ -324,4 +356,3 @@ function pitchOf(layout: BoardLayout): number {
   const first = layout.placements[0]
   return first ? BOARD_PROFILES[first.board].pitchMm : 2.6
 }
-

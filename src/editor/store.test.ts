@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { EMPTY, usedCells } from '../domain/grid'
+import { deriveLayoutGeometry } from '../domain/board'
+import { createProject } from '../domain/project'
+import { EMPTY, createGrid, usedCells } from '../domain/grid'
 import { useEditor } from './store'
 
 const store = () => useEditor.getState()
@@ -230,6 +232,25 @@ describe('编辑器 store', () => {
     store().pointerDown(180, 20, 0, false) // 右边那块 52 板
     store().pointerUp()
     expect(usedCells(store().grid)).toBe(2)
+  })
+
+  it('打开自由拼板工程时恢复空档遮罩并清掉空档脏数据', () => {
+    const layout = {
+      placements: [
+        { board: 'mini104' as const, col: 0, row: 0 },
+        { board: 'mini52' as const, col: 104, row: 0 },
+      ],
+      gapMm: 0,
+    }
+    const geometry = deriveLayoutGeometry(layout)
+    const grid = createGrid(geometry.cols, geometry.rows, EMPTY)
+    grid.cells[60 * geometry.cols + 120] = 9
+    const project = createProject({ name: 'L 形', layout, paletteId: 'mard-291', grid })
+
+    store().loadProject(project)
+
+    expect(store().grid.placeable).toEqual(geometry.placeable)
+    expect(store().grid.cells[60 * geometry.cols + 120]).toBe(EMPTY)
   })
 
   it('换板阵保留重叠位置上的内容', () => {

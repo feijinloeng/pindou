@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { deriveGeometry, type BoardArray } from './board'
+import { deriveGeometry, deriveLayoutGeometry, type BoardArray } from './board'
 import { EMPTY, createGrid, gridEquals } from './grid'
 import { createProject, parseProject, projectSummary, serializeProject } from './project'
 
@@ -103,10 +103,17 @@ describe('工程序列化', () => {
       ],
       gapMm: 0,
     }
-    project.grid = { cols: 156, rows: 104, cells: new Uint16Array(156 * 104).fill(EMPTY) }
+    const geometry = deriveLayoutGeometry(project.layout)
+    project.grid = createGrid(geometry.cols, geometry.rows, EMPTY, geometry.placeable)
+    project.grid.cells[0] = 7
+    // 模拟旧版本误把空档写成了豆，导出再导入后必须清掉。
+    project.grid.cells[60 * geometry.cols + 120] = 8
     const result = parseProject(serializeProject(project), 291)
     expect(result.error).toBeNull()
     expect(result.project?.layout.placements).toHaveLength(2)
+    expect(result.project?.grid.placeable).toEqual(geometry.placeable)
+    expect(result.project?.grid.cells[0]).toBe(7)
+    expect(result.project?.grid.cells[60 * geometry.cols + 120]).toBe(EMPTY)
   })
 
   it('格数超上限时报错', () => {

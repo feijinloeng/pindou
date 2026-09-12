@@ -163,6 +163,17 @@ let recording: PatchRecorder | null = null
 let lastPoint: { col: number; row: number } | null = null
 let rectAnchor: { col: number; row: number } | null = null
 
+/** 转换输入的代数。任何输入变化都会让旧结果失效。 */
+let conversionGeneration = 0
+let conversionController: AbortController | null = null
+
+function invalidateConversion(): number {
+  conversionGeneration++
+  conversionController?.abort()
+  conversionController = null
+  return conversionGeneration
+}
+
 function defaultBoard() {
   // 进来先给个 1 块 52 的台面，但选板页是开着的 —— 用户自己拼完才算数
   const preset = BOARD_PRESETS.find((p) => p.id === '52-1')!
@@ -232,6 +243,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     } catch (error) {
       return error instanceof Error ? error.message : '板阵不合法'
     }
+    invalidateConversion()
     const state = get()
     const previous = state.grid
     const next = createGrid(geom.cols, geom.rows, EMPTY, geom.placeable)
@@ -263,6 +275,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       selection: [],
       clipboard: null,
       pending: null,
+      converting: false,
+      progress: null,
       vp: fitViewport(geom.cols, geom.rows, 900, 700),
       notice:
         cells > WARN_CELLS
@@ -374,6 +388,25 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   loadProject(project) {
     const geom = deriveLayoutGeometry(project.layout)
+    const expected = geom.cols * geom.rows
+    if (
+      project.grid.cols !== geom.cols ||
+      project.grid.rows !== geom.rows ||
+      project.grid.cells.length !== expected
+    ) {
+      throw new Error(
+        `板阵推出的是 ${geom.cols}×${geom.rows}，格子数据是 ${project.grid.cols}×${project.grid.rows}，对不上`,
+      )
+    }
+    const cells = project.grid.cells.slice()
+    for (let i = 0; i < cells.length; i++) if (geom.placeable[i] !== 1) cells[i] = EMPTY
+    const normalizedGrid: CellGrid = {
+      cols: geom.cols,
+      rows: geom.rows,
+      cells,
+      placeable: geom.placeable.slice(),
+    }
+    invalidateConversion()
     history.clear()
     recording = null
     lastPoint = null
@@ -386,7 +419,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       layout: project.layout,
       pickerOpen: false,
       geom,
-      grid: project.grid,
+      grid: normalizedGrid,
       palette: getPalette(project.paletteId),
       paletteId: project.paletteId,
       allowedCodes: project.allowedCodes,
@@ -394,6 +427,15 @@ export const useEditor = create<EditorState>((set, get) => ({
       making: project.making,
       selection: [],
       pending: null,
+      converting: false,
+      progress: null,
+      lastConvert: null,
+      sourceImage: null,
+      sourceName: null,
+      bench: null,
+      benchRunning: false,
+      savedAt: null,
+      saving: false,
       notice: `已打开《${project.name}》`,
       version: get().version + 1,
       commitVersion: get().commitVersion + 1,
@@ -455,6 +497,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const { palette: oldPalette, grid } = get()
     const next = getPalette(id)
     if (next.id === oldPalette.id) return
+    invalidateConversion()
     const matcher = createMatcher(paletteRgb(next))
     const map = new Map<number, number>()
     recording = new PatchRecorder(grid, `换色板：${next.displayName}`)
@@ -470,7 +513,14 @@ export const useEditor = create<EditorState>((set, get) => ({
       const col = i % grid.cols
       recording.set(col, (i - col) / grid.cols, target)
     }
-    set({ palette: next, paletteId: next.id, allowedCodes: null, colorIndex: defaultColorIndex(next) })
+    set({
+      palette: next,
+      paletteId: next.id,
+      allowedCodes: null,
+      colorIndex: defaultColorIndex(next),
+      converting: false,
+      progress: null,
+    })
     commitRecording(set, get, `换到 ${next.displayName}`)
   },
 
@@ -490,6 +540,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       set({ notice: '不能把所有色号都排除掉' })
       return
     }
+    invalidateConversion()
     const normalized = nextAllowed.length === allCodes.length ? null : nextAllowed
     const mask = allCodes.map((c) => nextAllowed.includes(c))
 
@@ -506,7 +557,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         remapped++
       }
     }
-    set({ allowedCodes: normalized })
+    set({ allowedCodes: normalized, converting: false, progress: null })
     if (!isExcluded) {
       commitRecording(set, get, `排除 ${code}，重映射 ${remapped} 格`)
     } else {
@@ -515,7 +566,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   restoreAllCodes() {
-    set({ allowedCodes: null, notice: '恢复全部色号' })
+    invalidateConversion()
+    set({ allowedCodes: null, converting: false, progress: null, notice: '恢复全部色号' })
   },
   setShowCodes(showCodes) {
     set({ showCodes, version: get().version + 1, commitVersion: get().commitVersion + 1 })
@@ -616,9 +668,15 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   undo() {
+    invalidateConversion()
     const patch = history.undo(get().grid)
-    if (!patch) return
+    if (!patch) {
+      set({ converting: false, progress: null })
+      return
+    }
     set({
+      converting: false,
+      progress: null,
       version: get().version + 1,
       commitVersion: get().commitVersion + 1,
       notice: `撤销：${patch.label}`,
@@ -627,9 +685,15 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   redo() {
+    invalidateConversion()
     const patch = history.redo(get().grid)
-    if (!patch) return
+    if (!patch) {
+      set({ converting: false, progress: null })
+      return
+    }
     set({
+      converting: false,
+      progress: null,
       version: get().version + 1,
       commitVersion: get().commitVersion + 1,
       notice: `重做：${patch.label}`,
@@ -725,25 +789,32 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   async importImage(file) {
+    const generation = invalidateConversion()
+    set({ converting: false, progress: null })
     try {
       const image = await decodeImageFile(file)
+      if (generation !== conversionGeneration) return
       set({ sourceImage: image, sourceName: file.name })
       // 导入完直接转：只按一次按钮才看得到结果，中间那步「再点转换」会让人以为没反应
       await get().runConvert()
     } catch (error) {
+      if (generation !== conversionGeneration) return
       set({ notice: error instanceof Error ? error.message : '图片读不进来' })
     }
   },
 
   clearSourceImage() {
-    set({ sourceImage: null, sourceName: null })
+    invalidateConversion()
+    set({ sourceImage: null, sourceName: null, converting: false, progress: null })
   },
 
   setConversion(patch) {
-    set({ conversion: { ...get().conversion, ...patch } })
+    invalidateConversion()
+    set({ conversion: { ...get().conversion, ...patch }, converting: false, progress: null })
   },
 
   async runConvert() {
+    const generation = invalidateConversion()
     const state = get()
     if (!state.sourceImage) {
       set({ notice: '先导入一张图片' })
@@ -751,6 +822,8 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
     const paletteColors: Rgb[] = state.palette.colors.map((c) => c.rgb as Rgb)
     const allowed = allowedMask(state.palette, state.allowedCodes)
+    const controller = new AbortController()
+    conversionController = controller
     set({ converting: true, progress: { stage: '准备', ratio: 0 }, notice: null })
     try {
       const result = await runConvert({
@@ -760,15 +833,38 @@ export const useEditor = create<EditorState>((set, get) => ({
         cols: state.grid.cols,
         rows: state.grid.rows,
         settings: { ...state.conversion, dither: resolveDither(state.conversion.strategyId, state.conversion.dither) },
-        onProgress: (stage, ratio) => set({ progress: { stage, ratio } }),
+        signal: controller.signal,
+        onProgress: (stage, ratio) => {
+          if (generation === conversionGeneration) set({ progress: { stage, ratio } })
+        },
       })
 
+      const current = get()
+      const inputChanged =
+        generation !== conversionGeneration ||
+        current.projectId !== state.projectId ||
+        current.sourceImage !== state.sourceImage ||
+        current.paletteId !== state.paletteId ||
+        current.grid !== state.grid ||
+        current.pending !== state.pending ||
+        current.commitVersion !== state.commitVersion
+      if (inputChanged) {
+        if (generation === conversionGeneration) {
+          set({
+            converting: false,
+            progress: null,
+            notice: '转换期间输入发生变化，旧结果已丢弃，请重新转换',
+          })
+        }
+        return
+      }
+
       // 板没盖到的地方不属于作品：转换结果里的空档一律清掉
-      const mask = state.grid.placeable
+      const mask = current.grid.placeable
       if (mask) for (let i = 0; i < result.cells.length; i++) if (!mask[i]) result.cells[i] = EMPTY
 
       // 转换是一次大改动：能装进撤销栈就装，装不下就清空历史并说明
-      const grid = state.grid
+      const grid = current.grid
       const previous = grid.cells
       const recorder = new PatchRecorder(grid, '转换')
       for (let i = 0; i < result.cells.length; i++) {
@@ -782,8 +878,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       else history.clear()
 
       set({
-        version: state.version + 1,
-        commitVersion: state.commitVersion + 1,
+        version: current.version + 1,
+        commitVersion: current.commitVersion + 1,
         converting: false,
         progress: null,
         lastConvert: {
@@ -799,11 +895,14 @@ export const useEditor = create<EditorState>((set, get) => ({
         ...syncHistory(),
       })
     } catch (error) {
+      if (generation !== conversionGeneration) return
       set({
         converting: false,
         progress: null,
         notice: error instanceof Error ? error.message : '转换失败',
       })
+    } finally {
+      if (conversionController === controller) conversionController = null
     }
   },
 
@@ -847,10 +946,13 @@ function commitRecording(
   const rec = recording
   recording = null
   if (!rec) return
+  invalidateConversion()
   const patch = rec.patch()
   if (patch) history.push(patch)
   set({
     pending: null,
+    converting: false,
+    progress: null,
     version: get().version + 1,
     commitVersion: get().commitVersion + 1,
     notice: rec.overflowed

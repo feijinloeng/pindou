@@ -81,7 +81,7 @@ export function drawLine(
 /**
  * 油漆桶：4 邻域同色连通块填充。
  * ⚠️ 显式栈，不用递归 —— 100 万格的连通块用递归必爆栈。
- * 入栈前先落色，保证每格最多入栈一次。
+ * 入栈前先标记访问，保证每格最多入栈一次；placeable 空档也不会被搜索。
  */
 export function floodFill(
   sink: WriteSink,
@@ -98,39 +98,30 @@ export function floodFill(
 
   let stack = new Int32Array(1024)
   let top = 0
+  const visited = new Uint8Array(cells.length)
+  visited[start] = 1
   sink.set(col, row, value)
   stack[top++] = start
   let count = 1
+
+  const visit = (nextCol: number, nextRow: number, nextIndex: number) => {
+    if (!inBounds(grid, nextCol, nextRow)) return
+    if (visited[nextIndex] || cells[nextIndex] !== target) return
+    visited[nextIndex] = 1
+    if (sink.set(nextCol, nextRow, value)) count++
+    if (top === stack.length) stack = growStack(stack)
+    stack[top++] = nextIndex
+  }
 
   while (top > 0) {
     const i = stack[--top]
     const c = i % cols
     const r = (i - c) / cols
 
-    if (c > 0 && cells[i - 1] === target) {
-      sink.set(c - 1, r, value)
-      if (top === stack.length) stack = growStack(stack)
-      stack[top++] = i - 1
-      count++
-    }
-    if (c + 1 < cols && cells[i + 1] === target) {
-      sink.set(c + 1, r, value)
-      if (top === stack.length) stack = growStack(stack)
-      stack[top++] = i + 1
-      count++
-    }
-    if (r > 0 && cells[i - cols] === target) {
-      sink.set(c, r - 1, value)
-      if (top === stack.length) stack = growStack(stack)
-      stack[top++] = i - cols
-      count++
-    }
-    if (r + 1 < rows && cells[i + cols] === target) {
-      sink.set(c, r + 1, value)
-      if (top === stack.length) stack = growStack(stack)
-      stack[top++] = i + cols
-      count++
-    }
+    if (c > 0) visit(c - 1, r, i - 1)
+    if (c + 1 < cols) visit(c + 1, r, i + 1)
+    if (r > 0) visit(c, r - 1, i - cols)
+    if (r + 1 < rows) visit(c, r + 1, i + cols)
   }
   return count
 }
