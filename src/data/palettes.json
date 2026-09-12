@@ -1,7 +1,7 @@
 {
   "schema": "pindou-palettes",
   "schemaVersion": 1,
-  "note": "由 scripts/build-palettes.ts 生成，不要手改。色卡数据来自社区屏幕参考值，不是厂家官方色值。",
+  "note": "由 scripts/data/build-palettes.ts 生成，不要手改。色卡数据来自社区屏幕参考值，不是厂家官方色值。",
   "attribution": [
     {
       "repo": "maxcleme/beadcolors",

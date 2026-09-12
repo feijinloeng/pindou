@@ -4,7 +4,7 @@ import type { Palette } from '../domain/palette'
 import type { Rgb } from '../conversion/colorDistance'
 
 /**
- * 构建产物（`scripts/build-palettes.ts` 生成）的读取与索引。
+ * 构建产物（`scripts/data/build-palettes.ts` 生成）的读取与索引。
  * 运行时不发任何网络请求 —— 离线可用（第 1 节决策 22）。
  */
 export interface PaletteFile {

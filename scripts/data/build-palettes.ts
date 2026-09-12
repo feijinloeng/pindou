@@ -3,7 +3,7 @@
  * 拉三个数据源 → 归一化 → 写 src/data/palettes.json
  *
  * 只让这个脚本写那个文件，永远不手改。
- * 用 `node scripts/build-palettes.ts` 跑（Node 24 直接跑 TS，不用装 tsx）。
+ * 用 `npm run build:palettes` 跑（Node 24 直接跑 TS，不用装 tsx）。
  *
  * 数据源许可证（都是可商用的）：
  *  - maxcleme/beadcolors         MIT        Perler / Hama / Artkal 全系 + symbol 符号字段
@@ -323,7 +323,7 @@ async function main() {
   const payload = {
     schema: 'pindou-palettes',
     schemaVersion: 1,
-    note: '由 scripts/build-palettes.ts 生成，不要手改。色卡数据来自社区屏幕参考值，不是厂家官方色值。',
+    note: '由 scripts/data/build-palettes.ts 生成，不要手改。色卡数据来自社区屏幕参考值，不是厂家官方色值。',
     attribution: [
       {
         repo: 'maxcleme/beadcolors',

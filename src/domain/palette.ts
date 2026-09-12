@@ -57,7 +57,7 @@ function bead(code: string, name: string, hex: string): BeadColor {
 }
 
 /**
- * ⚠️ 临时色板，只在 M4 的 `scripts/build-palettes.ts` 落地前给编辑器和渲染用。
+ * ⚠️ 临时色板，只在色板数据生成前给编辑器和渲染用。
  * M4 之后这里只留类型定义，颜色全走 `src/data/palettes.json`。
  * 色号借用 Hama 的 'H' 前缀，数值是屏幕参考色，不是厂家数据。
  */

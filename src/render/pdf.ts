@@ -101,7 +101,7 @@ class JsPdfSink implements PdfSink {
   /**
    * 直接往内容流里写 PDF 操作符。
    * jsPDF 的高级方法一次只能画一个矩形（每格一次填充），按色分桶必须走裸操作符。
-   * `internal.out` 没进类型定义，这里断言一次并用 `scripts/verify-pdf.mjs` 盯着产物。
+   * `internal.out` 没进类型定义，这里做一次断言。
    */
   private raw(op: string): void {
     const internal = this.doc.internal as unknown as { out: (chunk: string) => void }
