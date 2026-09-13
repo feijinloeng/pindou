@@ -1,18 +1,29 @@
+import { useState } from 'react'
+import {
+  ArrowLeft,
+  Check,
+  FloppyDisk,
+  Info,
+  List,
+  Warning,
+} from '@phosphor-icons/react'
+
 import { layoutSizeMm } from '../domain/board'
 import { t } from '../i18n/zh'
 import { useEditor } from '../editor/store'
+import { useUi, type MotionPref, type ThemePref } from '../editor/uiState'
 import { navigate } from '../router'
-import { Dropdown, MenuItem, PrimaryBtn } from './ui'
+import { usePickerActions } from '../pages/pickerActions'
+import NewProjectDialog from './NewProjectDialog'
+import { Btn, Field, INPUT_CLS, Menu, MenuItem, Modal, Popover } from './ui'
 
 /**
- * 一行表头：菜单 / 作品名 / 当前阶段 / 保存状态 / 主操作。
- * 板阵尺寸、缩放、客户信息这些都不常驻 —— 各自只有一个家在菜单和画布边上。
+ * 文档头（spec 5.1）：产品/菜单 · 作品名+详情 · 保存状态 · 导航 · 保存/导出。
+ * 编辑页只有这一行头；选板时保存/导出换成确认/取消；导出时换成返回编辑。
  */
 export default function Toolbar() {
   const name = useEditor((s) => s.name)
   const setName = useEditor((s) => s.setName)
-  const customer = useEditor((s) => s.customer)
-  const setCustomer = useEditor((s) => s.setCustomer)
   const pickerOpen = useEditor((s) => s.pickerOpen)
   const stage = useEditor((s) => s.stage)
   const savedAt = useEditor((s) => s.savedAt)
@@ -20,184 +31,305 @@ export default function Toolbar() {
   const saveError = useEditor((s) => s.saveError)
   const saveNow = useEditor((s) => s.saveNow)
   const openExport = useEditor((s) => s.openExport)
-  const openPicker = useEditor((s) => s.openPicker)
-  const openPanel = useEditor((s) => s.openPanel)
-  const showCodes = useEditor((s) => s.showCodes)
-  const setShowCodes = useEditor((s) => s.setShowCodes)
+  const closeExport = useEditor((s) => s.closeExport)
   const savedCommitVersion = useEditor((s) => s.savedCommitVersion)
   const commitVersion = useEditor((s) => s.commitVersion)
+  const pickerConfirm = usePickerActions((s) => s.confirm)
+  const pickerCancel = usePickerActions((s) => s.cancel)
+  const pickerCanConfirm = usePickerActions((s) => s.canConfirm)
+  const [newOpen, setNewOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const copy = t('editor')
+
+  // 保存门：保存成功后内容一变（commitVersion 变了）就重新关上
+  const gateOpen = savedCommitVersion !== null && savedCommitVersion === commitVersion
+
+  return (
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-surface px-3 md:h-16">
+      <Menu label={<List size={18} aria-hidden />} title={copy.menu} width="w-60">
+        {(close) => (
+          <>
+            <MenuItem
+              onClick={() => {
+                setNewOpen(true)
+                close()
+              }}
+            >
+              {copy.newProject}
+            </MenuItem>
+            <div className="my-1 h-px bg-line" />
+            <MenuItem
+              onClick={() => {
+                navigate('library')
+                close()
+              }}
+            >
+              {t('nav').library}
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                navigate('editor')
+                close()
+              }}
+            >
+              {t('nav').editor}
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                navigate('follow')
+                close()
+              }}
+            >
+              {t('nav').follow}
+            </MenuItem>
+            <div className="my-1 h-px bg-line" />
+            <ThemeItems />
+            <MotionItems />
+            <div className="my-1 h-px bg-line" />
+            <MenuItem
+              onClick={() => {
+                setHelpOpen(true)
+                close()
+              }}
+            >
+              {copy.help}
+            </MenuItem>
+          </>
+        )}
+      </Menu>
+      <span className="hidden text-sm font-semibold md:inline">{t('appName')}</span>
+
+      {stage === 'export' && !pickerOpen ? (
+        <>
+          <Btn onClick={closeExport}>
+            <ArrowLeft size={16} aria-hidden />
+            {t('export').backToEdit}
+          </Btn>
+          <span className="ml-1 truncate text-sm text-ink-2">
+            {t('export').title} · {name}
+          </span>
+          {savedAt && (
+            <span className="ml-auto hidden items-center gap-1 text-xs text-ink-2 md:inline-flex">
+              <Check size={14} aria-hidden /> {copy.savedAt} {savedTime(savedAt)}
+            </span>
+          )}
+        </>
+      ) : (
+        <>
+          <input
+            className="w-[200px] min-w-[120px] rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-ink hover:border-line focus:border-line focus:bg-surface"
+            value={name}
+            placeholder={t('library').namePlaceholder}
+            aria-label={t('library').namePlaceholder}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <DetailsButton />
+
+          <div className="ml-auto flex items-center gap-2">
+            {pickerOpen ? (
+              <>
+                <Btn onClick={() => pickerCancel?.()}>{t('picker').cancel}</Btn>
+                <Btn
+                  variant="primary"
+                  disabled={!pickerCanConfirm}
+                  onClick={() => pickerConfirm?.()}
+                >
+                  {t('picker').confirmShort}
+                </Btn>
+              </>
+            ) : (
+              <>
+                <SaveStatus
+                  saving={saving}
+                  saveError={saveError}
+                  savedAt={savedAt}
+                  gateOpen={gateOpen}
+                  onRetry={() => void saveNow(true)}
+                />
+                <Btn onClick={() => navigate('library')} variant="ghost" title={t('nav').library}>
+                  <span className="hidden lg:inline">{t('nav').library}</span>
+                  <span className="lg:hidden">库</span>
+                </Btn>
+                <Btn onClick={() => navigate('follow')} variant="ghost" title={t('nav').follow}>
+                  <span className="hidden lg:inline">{t('nav').follow}</span>
+                  <span className="lg:hidden">跟</span>
+                </Btn>
+                <Btn
+                  onClick={() => void saveNow(true)}
+                  disabled={saving}
+                  title={copy.saveHint}
+                  variant={gateOpen ? 'secondary' : 'primary'}
+                >
+                  <FloppyDisk size={16} aria-hidden />
+                  <span className="hidden sm:inline">{copy.save}</span>
+                </Btn>
+                <Btn
+                  variant="primary"
+                  onClick={openExport}
+                  disabled={!gateOpen}
+                  title={gateOpen ? copy.nextExport : copy.exportGate}
+                >
+                  {copy.export}
+                </Btn>
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      <NewProjectDialog open={newOpen} onClose={() => setNewOpen(false)} />
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title={copy.help}>
+        <p className="text-sm leading-relaxed text-ink-2">{copy.shortcutsBody}</p>
+        <div className="mt-3 flex justify-end">
+          <Btn onClick={() => setHelpOpen(false)}>{t('library').cancel}</Btn>
+        </div>
+      </Modal>
+    </header>
+  )
+}
+
+/** 保存状态：成功打勾不换宽度；失败常显 + 可点重试；门没开时给出「导出前请保存」 */
+function SaveStatus({
+  saving,
+  saveError,
+  savedAt,
+  gateOpen,
+  onRetry,
+}: {
+  saving: boolean
+  saveError: string | null
+  savedAt: string | null
+  gateOpen: boolean
+  onRetry: () => void
+}) {
+  const copy = t('editor')
+  if (saving) {
+    return <span className="text-xs text-ink-2 tabular">{copy.saving}</span>
+  }
+  if (saveError) {
+    return (
+      <button
+        type="button"
+        onClick={onRetry}
+        className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-danger hover:bg-hover"
+      >
+        <Warning size={14} aria-hidden />
+        {copy.saveRetry}
+      </button>
+    )
+  }
+  return (
+    <span aria-live="polite" className="hidden items-center gap-1 text-xs text-ink-2 tabular sm:flex">
+      {gateOpen && savedAt ? (
+        <>
+          <Check size={14} className="text-accent" aria-hidden />
+          {copy.savedAt} {savedTime(savedAt)}
+        </>
+      ) : savedAt ? (
+        <>
+          {copy.autoSaved} {savedTime(savedAt)}
+          <span className="text-danger">{copy.exportGate}</span>
+        </>
+      ) : (
+        copy.unsaved
+      )}
+    </span>
+  )
+}
+
+/** 项目详情气泡：客户/订单备注 + 只读板阵摘要 */
+function DetailsButton() {
+  const customer = useEditor((s) => s.customer)
+  const setCustomer = useEditor((s) => s.setCustomer)
   const geom = useEditor((s) => s.geom)
   const layout = useEditor((s) => s.layout)
   const copy = t('editor')
   const size = layoutSizeMm(geom)
 
-  // 保存门：保存成功后内容一变（commitVersion 变了）就重新关上
-  const gateOpen = savedCommitVersion !== null && savedCommitVersion === commitVersion
-
-  /** 整图操作：先清选区，镜像 / 旋转才是整张图的意思 */
-  const whole = (run: (state: ReturnType<typeof useEditor.getState>) => void) => {
-    const state = useEditor.getState()
-    state.clearSel()
-    run(state)
-  }
-
   return (
-    <div className="flex items-center gap-2 border-b border-neutral-200 bg-white px-2 py-1.5">
-      <Dropdown label={copy.menu} title="项目菜单和整图操作" width="w-72">
-        {(close) => (
-          <>
-            <p className="px-2 pt-1 text-[11px] font-semibold tracking-wide text-neutral-500">
-              {copy.menuProject}
-            </p>
-            <label className="flex flex-col gap-1 px-2 pb-1 text-xs text-neutral-600">
-              {copy.customer}
-              <input
-                className="rounded border border-neutral-300 px-2 py-1 text-xs"
-                value={customer ?? ''}
-                placeholder={copy.customerPlaceholder}
-                onChange={(e) => setCustomer(e.target.value.trim() ? e.target.value : null)}
-              />
-            </label>
-            <p className="px-2 pb-1 text-[11px] leading-relaxed text-neutral-500">
-              {layout.placements.length} 块板 · {geom.cols}×{geom.rows} 格 ·{' '}
-              {size.w.toFixed(0)}×{size.h.toFixed(0)}mm
-            </p>
-            <MenuItem
-              onClick={() => {
-                openPicker('edit')
-                close()
-              }}
-            >
-              {copy.adjustBoards}
-            </MenuItem>
-
-            <p className="mt-1 px-2 pt-1 text-[11px] font-semibold tracking-wide text-neutral-500">
-              {copy.imageMenu}
-            </p>
-            <MenuItem
-              onClick={() => {
-                openPanel('image')
-                close()
-              }}
-            >
-              {copy.importImage}
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                whole((s) => s.rotate(1))
-                close()
-              }}
-            >
-              {copy.rotateWholeCw}
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                whole((s) => s.rotate(-1))
-                close()
-              }}
-            >
-              {copy.rotateWholeCcw}
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                whole((s) => s.mirror('h'))
-                close()
-              }}
-            >
-              {copy.mirrorWholeH}
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                whole((s) => s.mirror('v'))
-                close()
-              }}
-            >
-              {copy.mirrorWholeV}
-            </MenuItem>
-            <p className="px-2 pt-1 text-[11px] text-neutral-500">{copy.moveWhole}</p>
-            <div className="flex gap-1 px-2 pb-1">
-              {(
-                [
-                  ['←', -1, 0],
-                  ['→', 1, 0],
-                  ['↑', 0, -1],
-                  ['↓', 0, 1],
-                ] as const
-              ).map(([arrow, dc, dr]) => (
-                <button
-                  key={arrow}
-                  type="button"
-                  aria-label={`${copy.moveWhole} ${arrow}`}
-                  className="h-7 w-7 rounded border border-neutral-300 text-xs hover:bg-neutral-100"
-                  onClick={() => whole((s) => s.translate(dc, dr))}
-                >
-                  {arrow}
-                </button>
-              ))}
-            </div>
-
-            <MenuItem onClick={() => setShowCodes(!showCodes)}>
-              {showCodes ? `✓ ${copy.showCodes}` : copy.showCodes}
-            </MenuItem>
-
-            <div className="my-1 h-px bg-neutral-200" />
-            <MenuItem onClick={() => navigate('library')}>{t('nav').library}</MenuItem>
-            <MenuItem onClick={() => navigate('follow')}>{t('nav').follow}</MenuItem>
-            <details className="px-2 py-1 text-[11px] leading-relaxed text-neutral-500">
-              <summary className="cursor-pointer">{copy.shortcuts}</summary>
-              <p className="mt-1">{copy.shortcutsBody}</p>
-            </details>
-          </>
-        )}
-      </Dropdown>
-
-      <input
-        className="w-40 rounded border border-neutral-300 px-2 py-1 text-xs"
-        value={name}
-        placeholder={t('library').namePlaceholder}
-        aria-label={t('library').namePlaceholder}
-        onChange={(e) => setName(e.target.value)}
-      />
-
-      <span className="rounded bg-neutral-100 px-2 py-1 text-[11px] text-neutral-500">
-        {pickerOpen ? copy.stagePick : stage === 'export' ? copy.stageExport : copy.stageEdit}
-      </span>
-
-      <div className="ml-auto flex items-center gap-2">
-        <span
-          aria-live="polite"
-          className={`text-xs tabular-nums ${saveError ? 'text-red-600' : 'text-neutral-500'}`}
-        >
-          {saving
-            ? copy.saving
-            : saveError
-              ? copy.saveRetry
-              : gateOpen && savedAt
-                ? `${copy.savedAt} ${savedTime(savedAt)}`
-                : savedAt
-                  ? `${copy.autoSaved} ${savedTime(savedAt)}·${copy.needSave}`
-                  : copy.unsaved}
-        </span>
-        {stage === 'edit' && !pickerOpen && gateOpen && (
-          <PrimaryBtn onClick={openExport} title="内容已保存，可以导出了">
-            {copy.nextExport}
-          </PrimaryBtn>
-        )}
+    <Popover
+      title={copy.details}
+      width="w-72"
+      trigger={(open, toggle) => (
         <button
           type="button"
-          onClick={() => void saveNow(true)}
-          disabled={saving}
-          title={copy.saveHint}
-          className={`rounded border px-2 py-1 text-xs whitespace-nowrap transition disabled:cursor-not-allowed disabled:opacity-40 ${
-            gateOpen
-              ? 'border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100'
-              : 'border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-800'
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-label={copy.details}
+          title={copy.details}
+          onClick={toggle}
+          className={`flex h-9 w-9 items-center justify-center rounded-lg text-ink-2 hover:bg-hover hover:text-ink ${
+            open ? 'bg-hover text-ink' : ''
           }`}
         >
-          {copy.save}
+          <Info size={18} aria-hidden />
         </button>
+      )}
+    >
+      <div className="flex flex-col gap-3">
+        <Field label={copy.customer}>
+          <input
+            className={INPUT_CLS}
+            value={customer ?? ''}
+            placeholder={copy.customerPlaceholder}
+            onChange={(e) => setCustomer(e.target.value.trim() ? e.target.value : null)}
+          />
+        </Field>
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-ink-2">
+          <dt>{t('library').boards}</dt>
+          <dd className="text-right tabular">{layout.placements.length}</dd>
+          <dt>{t('library').cells}</dt>
+          <dd className="text-right tabular">
+            {geom.cols}×{geom.rows}
+          </dd>
+          <dt>{t('library').physicalSize}</dt>
+          <dd className="text-right tabular">
+            {size.w.toFixed(0)}×{size.h.toFixed(0)}mm
+          </dd>
+        </dl>
       </div>
-    </div>
+    </Popover>
+  )
+}
+
+function ThemeItems() {
+  const theme = useUi((s) => s.theme)
+  const setTheme = useUi((s) => s.setTheme)
+  const copy = t('editor')
+  const options: Array<[ThemePref, string]> = [
+    ['system', copy.themeSystem],
+    ['light', copy.themeLight],
+    ['dark', copy.themeDark],
+  ]
+  return (
+    <>
+      <p className="px-2 pt-1 text-xs text-ink-2">{copy.theme}</p>
+      {options.map(([id, label]) => (
+        <MenuItem key={id} onClick={() => setTheme(id)}>
+          {theme === id ? `✓ ${label}` : label}
+        </MenuItem>
+      ))}
+    </>
+  )
+}
+
+function MotionItems() {
+  const motion = useUi((s) => s.motion)
+  const setMotion = useUi((s) => s.setMotion)
+  const copy = t('editor')
+  const options: Array<[MotionPref, string]> = [
+    ['system', copy.motionSystem],
+    ['reduced', copy.motionReduced],
+  ]
+  return (
+    <>
+      <p className="px-2 pt-1 text-xs text-ink-2">{copy.motionPref}</p>
+      {options.map(([id, label]) => (
+        <MenuItem key={id} onClick={() => setMotion(id)}>
+          {motion === id ? `✓ ${label}` : label}
+        </MenuItem>
+      ))}
+    </>
   )
 }
 

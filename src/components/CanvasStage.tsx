@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { FrameCorners } from '@phosphor-icons/react'
+
 import { usedCells } from '../domain/grid'
 import { t } from '../i18n/zh'
 import { useEditor } from '../editor/store'
@@ -129,6 +131,8 @@ export default function CanvasStage() {
         boards: s.geom.boards,
         placeable: s.grid.placeable,
         bitmap,
+        // 屏幕上的板框用中性色（spec 5.4）：红色那圈太警报。导出文档有自己的常量，不受影响
+        seamColor: '#8B9691',
       })
     },
     [bitmap, dpr],
@@ -291,7 +295,7 @@ export default function CanvasStage() {
       <canvas ref={commitRef} className="absolute left-0 top-0" />
       <canvas
         ref={overlayRef}
-        className="absolute left-0 top-0 touch-none focus:outline-2 focus:outline-sky-500"
+        className="absolute left-0 top-0 touch-none"
         tabIndex={0}
         role="application"
         aria-label="豆格画布：方向键移动光标，Enter 应用当前工具"
@@ -351,59 +355,66 @@ export default function CanvasStage() {
           useEditor.getState().pointerUp()
         }}
       />
-      <div className="pointer-events-none absolute right-3 bottom-3 z-10 flex items-center gap-1">
+      <div className="pointer-events-none absolute right-4 bottom-4 z-10 flex items-center gap-0.5 rounded-xl border border-line bg-surface p-1 shadow-sm">
         <button
           type="button"
           aria-label={`${t('editor').zoom} −`}
           title="缩小"
           onClick={() => stepZoom(1 / 1.25)}
-          className="pointer-events-auto h-7 w-7 rounded border border-neutral-300 bg-white/90 text-sm text-neutral-700 hover:bg-white"
+          className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-lg text-ink hover:bg-hover"
         >
           −
         </button>
-        <span className="rounded bg-white/80 px-2 py-1 text-xs tabular-nums text-neutral-600">
-          {vp.zoom >= CODE_ZOOM ? '100%+ 色号' : `${Math.round(vp.zoom * 100)}%`}
+        {/* vp.zoom 就是每格多少 CSS 像素，直接显示它，别再编一个「100%」 */}
+        <span
+          className="pointer-events-auto px-1 text-xs text-ink-2 tabular"
+          title={
+            showCodes && vp.zoom < CODE_ZOOM ? t('editor').viewCodesZoomHint : undefined
+          }
+        >
+          {t('editor').pxPerCell(vp.zoom)}
         </span>
         <button
           type="button"
           aria-label={`${t('editor').zoom} ＋`}
           title="放大"
           onClick={() => stepZoom(1.25)}
-          className="pointer-events-auto h-7 w-7 rounded border border-neutral-300 bg-white/90 text-sm text-neutral-700 hover:bg-white"
+          className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-lg text-ink hover:bg-hover"
         >
           ＋
         </button>
         <button
           type="button"
           onClick={() => fitTo(size.width, size.height, dpr)}
+          aria-label={t('editor').fitCanvas}
           title={t('editor').fitCanvasHint}
-          className="pointer-events-auto rounded border border-neutral-300 bg-white/90 px-2 py-1 text-xs text-neutral-700 hover:bg-white"
+          className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-lg text-ink hover:bg-hover"
         >
-          {t('editor').fitCanvas}
+          <FrameCorners size={18} aria-hidden />
         </button>
       </div>
       <div className="pointer-events-none absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
         {empty && !promptDismissed && (
-          <div className="pointer-events-auto flex w-56 flex-col gap-2 rounded border border-neutral-300 bg-white/95 p-3 text-center shadow-lg">
-            <p className="text-xs font-medium text-neutral-700">{copy.emptyTitle}</p>
+          <div className="pointer-events-auto flex w-60 flex-col gap-2 rounded-xl border border-line bg-surface p-4 text-center shadow-lg">
+            <p className="text-sm font-medium text-ink">{copy.emptyTitle}</p>
             <button
               type="button"
               onClick={() => {
                 setPromptDismissed(true)
                 openPanel('image')
               }}
-              className="rounded border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs text-white"
+              className="rounded-lg border border-accent bg-accent px-3 py-1.5 text-sm text-on-accent"
             >
               {copy.emptyImport}
             </button>
             <button
               type="button"
               onClick={() => setPromptDismissed(true)}
-              className="rounded border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-100"
+              className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink hover:bg-hover"
             >
               {copy.emptyDraw}
             </button>
-            <p className="text-[11px] text-neutral-500">{copy.emptyHint}</p>
+            <p className="text-xs text-ink-2">{copy.emptyHint}</p>
           </div>
         )}
       </div>

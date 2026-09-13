@@ -12,7 +12,7 @@ import { EMPTY, type CellGrid, createGrid, inBounds } from '../domain/grid'
 import { type Palette } from '../domain/palette'
 import { allowedMask, defaultColorIndex, getPalette, paletteRgb } from '../data/palettes'
 import { createMatcher } from '../conversion/match'
-import { fitViewport, type Viewport } from '../render/canvasViewport'
+import { EDITOR_FIT_PAD, fitViewport, type Viewport } from '../render/canvasViewport'
 import { History, PatchRecorder, type CellPatch, type HistoryMeta } from './history'
 import {
   copySelection,
@@ -47,8 +47,8 @@ import type { SourceImage } from '../conversion/types'
 
 export type ToolId = 'select' | 'pencil' | 'eraser' | 'picker' | 'bucket' | 'rect'
 
-/** 画布旁边同一时间只开一个临时面板 */
-export type PanelId = 'color' | 'image'
+/** 画布旁边同一时间只开一个临时面板。transform 是纯展示面板（整图变换），不动 store 数据 */
+export type PanelId = 'color' | 'image' | 'transform'
 /** 两个目的地：编辑 / 导出 */
 export type Stage = 'edit' | 'export'
 
@@ -90,6 +90,8 @@ export interface EditorState {
   canRedo: boolean
   undoBytes: number
   notice: string | null
+  /** 通知级别：error 不自动消失，必须手动关掉或纠正 */
+  noticeKind: 'info' | 'error'
   /** 进行中的笔画：格索引 → 色板索引。只画在覆盖层，松手才提交 */
   pending: Map<number, number> | null
   /** 导入的源图（解码后、已限制尺寸） */
@@ -158,7 +160,7 @@ export interface EditorState {
   pointerDown(col: number, row: number, button: number, shift: boolean): void
   pointerMove(col: number, row: number): void
   pointerUp(): void
-  setNotice(message: string | null): void
+  setNotice(message: string | null, kind?: 'info' | 'error'): void
   undo(): void
   redo(): void
   selectAll(): void
@@ -266,6 +268,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   canRedo: false,
   undoBytes: 0,
   notice: null,
+  noticeKind: 'info' as const,
   pending: null,
   sourceImage: null,
   sourceName: null,
@@ -459,7 +462,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : '未知错误'
-        set({ saving: false, saveError: message, notice: `保存失败：${message}` })
+        set({ saving: false, saveError: message, notice: `保存失败：${message}`, noticeKind: 'error' })
       }
     }, explicit)
   },
@@ -669,7 +672,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
   fitTo(width, height, dpr = 1) {
     const { geom } = get()
-    set({ vp: fitViewport(geom.cols, geom.rows, width, height, dpr) })
+    // 首次铺满给启动器和 dock 留位（spec 5.4），别让浮层盖住最外圈格子
+    set({ vp: fitViewport(geom.cols, geom.rows, width, height, dpr, EDITOR_FIT_PAD) })
   },
 
   pointerDown(col, row, button, shift) {
@@ -755,8 +759,8 @@ export const useEditor = create<EditorState>((set, get) => ({
     commitRecording(set, get, null)
   },
 
-  setNotice(notice) {
-    set({ notice })
+  setNotice(notice, kind = 'info') {
+    set({ notice, noticeKind: notice === null ? 'info' : kind })
   },
 
   undo() {

@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DotsThreeVertical, MagnifyingGlass, Plus, X } from '@phosphor-icons/react'
 
 import { getPalette } from '../data/palettes'
-
 import { deriveLayoutGeometry } from '../domain/board'
-
-
 import {
   createProject,
   normalizeGridForLayout,
@@ -14,6 +12,7 @@ import {
   type Project,
 } from '../domain/project'
 import { useEditor } from '../editor/store'
+import { gsap, MOTION, reducedMotion } from '../motion'
 import { navigate } from '../router'
 import { downloadBytes, safeName } from '../render/download'
 import { renderThumbnailDataUrl } from '../render/thumbnail'
@@ -28,7 +27,11 @@ import {
   type LibraryEntry,
 } from '../storage/db'
 import { t } from '../i18n/zh'
-import { Btn } from '../components/ui'
+import NewProjectDialog from '../components/NewProjectDialog'
+import { Btn, Menu, MenuItem, Modal } from '../components/ui'
+
+type Tab = 'projects' | 'trash'
+const TRASH_PREFIX = '[已删除] '
 
 export default function Library() {
   const [entries, setEntries] = useState<LibraryEntry[]>([])
@@ -36,7 +39,10 @@ export default function Library() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [issues, setIssues] = useState<string[]>([])
-  const [name, setName] = useState('')
+  const [query, setQuery] = useState('')
+  const [tab, setTab] = useState<Tab>('projects')
+  const [newOpen, setNewOpen] = useState(false)
+  const [details, setDetails] = useState<Project | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const copy = t('library')
 
@@ -70,15 +76,6 @@ export default function Library() {
     }
   }
 
-  const newProject = () =>
-    runWrite(async () => {
-      const editor = useEditor.getState()
-      // 不预设板阵：进编辑器先让人自己拼台面（选板页）
-      editor.newProject(name.trim() || copy.untitled)
-      await putProject(editor.toProject())
-      navigate('editor')
-    })
-
   const openProject = async (id: string) => {
     try {
       // 优先打开草稿（可能比正式保存的更新）
@@ -111,7 +108,7 @@ export default function Library() {
   const duplicate = (project: Project) =>
     runWrite(async () => {
       const clone = createProject({
-        name: `${project.name} 副本`,
+        name: `${cleanName(project.name)} 副本`,
         layout: project.layout,
         paletteId: project.paletteId,
         grid: normalizeGridForLayout(project.grid, deriveLayoutGeometry(project.layout)).grid,
@@ -129,7 +126,7 @@ export default function Library() {
 
   const rename = (project: Project) =>
     runWrite(async () => {
-      const next = window.prompt(copy.renamePrompt, project.name)
+      const next = window.prompt(copy.renamePrompt, cleanName(project.name))
       if (!next) return
       await putProject({ ...project, name: next, updatedAt: new Date().toISOString() })
       await refresh()
@@ -152,7 +149,7 @@ export default function Library() {
     const text = serializeProject(project)
     downloadBytes(
       new TextEncoder().encode(text),
-      `${safeName(project.name)}.pindou.json`,
+      `${safeName(cleanName(project.name))}.pindou.json`,
       'application/json',
     )
   }
@@ -174,18 +171,52 @@ export default function Library() {
     }
   }
 
+  // 本地搜索 + 按更新时间排序 + 作品/回收站分栏。都不改写盘数据。
+  const shown = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return entries
+      .filter((entry) => {
+        const deleted = entry.project.name.startsWith(TRASH_PREFIX)
+        if (tab === 'trash' ? !deleted : deleted) return false
+        if (!needle) return true
+        return (
+          cleanName(entry.project.name).toLowerCase().includes(needle) ||
+          (entry.project.customer ?? '').toLowerCase().includes(needle)
+        )
+      })
+      .sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
+  }, [entries, query, tab])
+
+  // 只给前 8 张卡片播入场（spec 12.2：不为一屏之外的卡片付动画钱）。
+  // 依赖长度而不是数组本身：重命名也会 refresh，不该因此重播一次入场。
+  const gridRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = gridRef.current
+    if (!el || reducedMotion()) return
+    gsap.fromTo(
+      Array.from(el.children).slice(0, 8),
+      { opacity: 0, y: 8 },
+      {
+        opacity: 1,
+        y: 0,
+        duration: 0.22,
+        ease: MOTION.easeOut,
+        stagger: 0.025,
+        clearProps: 'transform',
+      },
+    )
+  }, [shown.length])
+
   return (
-    <div className="mx-auto flex h-full max-w-5xl flex-col gap-4 overflow-y-auto p-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold">{copy.title}</h2>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <input
-            className="rounded border border-neutral-300 px-2 py-1 text-sm"
-            placeholder={copy.namePlaceholder}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <Btn onClick={() => void newProject()} disabled={busy}>
+    <div className="mx-auto flex h-full w-full max-w-[1280px] flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6">
+      <div className="flex flex-wrap items-end gap-2">
+        <div>
+          <h2 className="text-[28px] leading-tight font-semibold">{copy.title}</h2>
+          <p className="text-sm text-ink-2">{copy.subtitle}</p>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <Btn variant="primary" onClick={() => setNewOpen(true)} disabled={busy}>
+            <Plus size={16} aria-hidden />
             {copy.new}
           </Btn>
           <Btn onClick={() => fileRef.current?.click()} disabled={busy}>
@@ -205,10 +236,60 @@ export default function Library() {
         </div>
       </div>
 
+      {/* 工具条：搜索 / 作品·回收站 / 排序 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative">
+          <MagnifyingGlass
+            size={14}
+            aria-hidden
+            className="absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-2"
+          />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={copy.searchPlaceholder}
+            aria-label={copy.searchPlaceholder}
+            className="w-56 rounded-lg border border-line bg-surface py-1.5 pr-7 pl-8 text-sm text-ink placeholder:text-ink-2/60"
+          />
+          {query && (
+            <button
+              type="button"
+              aria-label={copy.clearSearch}
+              onClick={() => setQuery('')}
+              className="absolute top-1/2 right-1.5 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-ink-2 hover:bg-hover"
+            >
+              <X size={12} aria-hidden />
+            </button>
+          )}
+        </div>
+        <div role="tablist" aria-label={copy.title} className="flex gap-1">
+          {(
+            [
+              ['projects', copy.tabProjects],
+              ['trash', copy.tabTrash],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
+              className={`rounded-lg px-3 py-1.5 text-sm ${
+                tab === id ? 'bg-accent text-on-accent' : 'text-ink-2 hover:bg-hover'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="ml-auto text-xs text-ink-2">{copy.sortUpdated} ↓</span>
+      </div>
+
       {error && (
         <p
           role="alert"
-          className="flex flex-wrap items-center gap-2 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700"
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-danger/40 bg-surface p-3 text-sm text-danger"
         >
           {error}
           <Btn onClick={() => void refresh()}>{copy.retry}</Btn>
@@ -216,23 +297,45 @@ export default function Library() {
       )}
 
       {issues.length > 0 && (
-        <ul role="status" className="rounded border border-amber-200 bg-amber-50 p-2 text-sm text-amber-800">
+        <ul role="status" className="rounded-xl border border-warn-ink/30 bg-warn-bg p-3 text-sm text-warn-ink">
           {issues.map((issue) => (
             <li key={issue}>{issue}</li>
           ))}
         </ul>
       )}
 
-      {loading && <p className="text-sm text-neutral-500">{copy.loading}</p>}
-      {!loading && !error && entries.length === 0 && (
-        <p className="text-sm text-neutral-500">{copy.empty}</p>
+      {loading && <p className="text-sm text-ink-2">{copy.loading}</p>}
+
+      {!loading && !error && shown.length === 0 && (
+        <div className="flex flex-col items-center gap-3 py-16 text-center">
+          {query ? (
+            <>
+              <p className="text-sm text-ink-2">{copy.emptySearch.replace('{q}', query)}</p>
+              <Btn onClick={() => setQuery('')}>{copy.clearSearch}</Btn>
+            </>
+          ) : tab === 'trash' ? (
+            <p className="text-sm text-ink-2">{copy.emptyTrash}</p>
+          ) : (
+            <>
+              <p className="text-sm text-ink-2">{copy.empty}</p>
+              <div className="flex gap-2">
+                <Btn variant="primary" onClick={() => setNewOpen(true)}>
+                  <Plus size={16} aria-hidden />
+                  {copy.new}
+                </Btn>
+                <Btn onClick={() => fileRef.current?.click()}>{copy.import}</Btn>
+              </div>
+            </>
+          )}
+        </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {entries.map((entry) => (
+      <div ref={gridRef} className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {shown.map((entry) => (
           <ProjectCard
             key={entry.project.id}
             entry={entry}
+            busy={busy}
             onOpen={() => void openProject(entry.project.id)}
             onFollow={() => void followProject(entry.project.id)}
             onDuplicate={() => void duplicate(entry.project)}
@@ -248,15 +351,20 @@ export default function Library() {
               }
             }}
             onExport={() => exportProject(entry.project)}
+            onDetails={() => setDetails(entry.project)}
           />
         ))}
       </div>
+
+      <NewProjectDialog open={newOpen} onClose={() => setNewOpen(false)} />
+      <ProjectDetails project={details} onClose={() => setDetails(null)} />
     </div>
   )
 }
 
 function ProjectCard({
   entry,
+  busy,
   onOpen,
   onFollow,
   onDuplicate,
@@ -265,8 +373,10 @@ function ProjectCard({
   onRestore,
   onPurge,
   onExport,
+  onDetails,
 }: {
   entry: LibraryEntry
+  busy: boolean
   onOpen: () => void
   onFollow: () => void
   onDuplicate: () => void
@@ -275,10 +385,11 @@ function ProjectCard({
   onRestore: () => void
   onPurge: () => void
   onExport: () => void
+  onDetails: () => void
 }) {
   const project = entry.project
   const [thumb, setThumb] = useState<string | null>(null)
-  const deleted = project.name.startsWith('[已删除] ')
+  const deleted = project.name.startsWith(TRASH_PREFIX)
   const copy = t('library')
   // 摘要要扫完整张画布，几百个 130 万格工程不能每次渲染都算
   const summary = useMemo(() => projectSummary(project), [project])
@@ -289,58 +400,162 @@ function ProjectCard({
   }, [project])
 
   return (
-    <div
-      className={`flex flex-col gap-2 rounded border p-3 ${
-        deleted ? 'border-dashed border-neutral-300 bg-neutral-50' : 'border-neutral-200 bg-white'
+    <article
+      className={`flex flex-col overflow-hidden rounded-xl border bg-surface ${
+        deleted ? 'border-dashed border-line' : 'border-line'
       }`}
     >
-      <button type="button" onClick={onOpen} className="flex items-center gap-3 text-left">
-        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded border border-neutral-200 bg-neutral-50">
+      <button
+        type="button"
+        onClick={onOpen}
+        disabled={busy}
+        aria-label={`${copy.open}《${cleanName(project.name)}》`}
+        className="group block text-left"
+      >
+        {/* 4:3 预览区：图案本身是最大的视觉，操作都让开 */}
+        <div className="flex aspect-[4/3] items-center justify-center border-b border-line bg-hover">
           {thumb ? (
-            <img src={thumb} alt="" className="max-h-full max-w-full" />
+            <img src={thumb} alt="" className="max-h-full max-w-full object-contain" />
           ) : (
-            <span className="text-[10px] text-neutral-400">…</span>
+            <span className="text-xs text-ink-2">…</span>
           )}
         </div>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{project.name}</p>
-          {project.customer && (
-            <p className="truncate text-[11px] text-neutral-500">
-              {copy.customerLabel}：{project.customer}
-            </p>
-          )}
-          {entry.hasNewerDraft && (
-            <p className="text-[11px] text-amber-600">{copy.hasDraft}</p>
-          )}
-          <p className="text-xs text-neutral-500">
-            {summary.cells.toLocaleString()} 格 · {summary.beads.toLocaleString()} 颗 ·{' '}
-            {summary.colorCount} 色
+        <div className="flex flex-col gap-0.5 p-3">
+          <p className="flex items-center gap-2 text-sm font-medium text-ink">
+            <span className="truncate">{cleanName(project.name)}</span>
+            {entry.hasNewerDraft && (
+              <span className="shrink-0 rounded bg-warn-bg px-1.5 py-0.5 text-[10px] text-warn-ink">
+                {copy.hasDraft}
+              </span>
+            )}
           </p>
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-ink-2 tabular">
+            {summary.beads.toLocaleString()} 颗 · {summary.colorCount} 色
+          </p>
+          <p className="text-xs text-ink-2 tabular">
             {summary.boardCount} 块板 · {summary.sizeMm.w.toFixed(0)}×{summary.sizeMm.h.toFixed(0)}mm
           </p>
-          <p className="text-[11px] text-neutral-400">
+          <p className="text-[11px] text-ink-2/70">
             {copy.updatedAt} {formatStamp(project.updatedAt)}
           </p>
         </div>
       </button>
-      <div className="flex flex-wrap gap-1">
-        <Btn onClick={onOpen}>{copy.open}</Btn>
-        <Btn onClick={onFollow}>{copy.follow}</Btn>
-        <Btn onClick={onDuplicate}>{copy.duplicate}</Btn>
-        <Btn onClick={onRename}>{copy.rename}</Btn>
-        <Btn onClick={onExport}>{copy.exportProject}</Btn>
-        {deleted ? (
-          <>
-            <Btn onClick={onRestore}>{copy.restore}</Btn>
-            <Btn onClick={onPurge}>{copy.purge}</Btn>
-          </>
-        ) : (
-          <Btn onClick={onDelete}>{copy.delete}</Btn>
-        )}
+      <div className="flex items-center gap-1 border-t border-line px-2 py-1.5">
+        <Btn onClick={onFollow} disabled={busy} variant="ghost">
+          {copy.follow}
+        </Btn>
+        <span className="ml-auto" />
+        <Menu label={<DotsThreeVertical size={18} aria-hidden />} title={copy.more} align="right" width="w-48" triggerVariant="ghost">
+          {(close) => (
+            <>
+              {deleted ? (
+                <>
+                  <MenuItem
+                    onClick={() => {
+                      onRestore()
+                      close()
+                    }}
+                  >
+                    {copy.restore}
+                  </MenuItem>
+                  <div className="my-1 h-px bg-line" />
+                  <MenuItem
+                    onClick={() => {
+                      onPurge()
+                      close()
+                    }}
+                  >
+                    <span className="text-danger">{copy.purge}</span>
+                  </MenuItem>
+                </>
+              ) : (
+                <>
+                  <MenuItem
+                    onClick={() => {
+                      onDuplicate()
+                      close()
+                    }}
+                  >
+                    {copy.duplicate}
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      onRename()
+                      close()
+                    }}
+                  >
+                    {copy.rename}
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      onExport()
+                      close()
+                    }}
+                  >
+                    {copy.exportProject}
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      onDetails()
+                      close()
+                    }}
+                  >
+                    {copy.details}
+                  </MenuItem>
+                  <div className="my-1 h-px bg-line" />
+                  <MenuItem
+                    onClick={() => {
+                      onDelete()
+                      close()
+                    }}
+                  >
+                    <span className="text-danger">{copy.delete}</span>
+                  </MenuItem>
+                </>
+              )}
+            </>
+          )}
+        </Menu>
       </div>
-    </div>
+    </article>
   )
+}
+
+/** 项目详情：所有摘要值都在这，卡片上不用堆数字 */
+function ProjectDetails({ project, onClose }: { project: Project | null; onClose: () => void }) {
+  const copy = t('library')
+  const summary = useMemo(() => (project ? projectSummary(project) : null), [project])
+  if (!project || !summary) return null
+  const rows: Array<[string, string]> = [
+    [copy.namePlaceholder, cleanName(project.name)],
+    [copy.customerLabel, project.customer ?? '—'],
+    [copy.cells, summary.cells.toLocaleString()],
+    [copy.beads, summary.beads.toLocaleString()],
+    [copy.colorsUsed, `${summary.colorCount}`],
+    [copy.boards, `${summary.boardCount}`],
+    [copy.physicalSize, `${summary.sizeMm.w.toFixed(1)}×${summary.sizeMm.h.toFixed(1)} mm`],
+    [copy.updatedAt, formatStamp(project.updatedAt)],
+  ]
+  return (
+    <Modal open onClose={onClose} title={copy.details}>
+      <dl className="flex flex-col gap-1.5">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex justify-between gap-3 text-sm">
+            <dt className="text-ink-2">{k}</dt>
+            <dd className="text-right text-ink tabular">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="mt-4 flex justify-end">
+        <Btn onClick={onClose}>{copy.cancel}</Btn>
+      </div>
+    </Modal>
+  )
+}
+
+/** 回收站显示干净名字：前缀是存储格式，不是给人看的 */
+function cleanName(name: string): string {
+  return name.startsWith(TRASH_PREFIX) ? name.slice(TRASH_PREFIX.length) : name
 }
 
 /** 异常 → 一句话（非 Error 也别说成 undefined） */

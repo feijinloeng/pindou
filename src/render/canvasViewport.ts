@@ -93,21 +93,30 @@ export function panBy(vp: Viewport, dx: number, dy: number): Viewport {
   return { ...vp, panX: vp.panX + dx, panY: vp.panY + dy }
 }
 
-/** 让整张图居中铺满，留 pad 像素边距 */
+/** 编辑器首次铺满的安全边距：给左上启动器和底部 dock 留位，别盖住最外圈可编辑格 */
+export const EDITOR_FIT_PAD = { top: 72, right: 24, bottom: 96, left: 24 } as const
+
+/** 让整张图居中铺满，留 pad 像素边距（可以是四边不同的对象） */
 export function fitViewport(
   cols: number,
   rows: number,
   canvasW: number,
   canvasH: number,
   dpr = 1,
-  pad = 24,
+  pad: number | { top?: number; right?: number; bottom?: number; left?: number } = 24,
 ): Viewport {
-  const zoom = clampZoom(Math.min((canvasW - pad * 2) / cols, (canvasH - pad * 2) / rows))
+  const p =
+    typeof pad === 'number'
+      ? { top: pad, right: pad, bottom: pad, left: pad }
+      : { top: pad.top ?? 0, right: pad.right ?? 0, bottom: pad.bottom ?? 0, left: pad.left ?? 0 }
+  const zoom = clampZoom(
+    Math.min((canvasW - p.left - p.right) / cols, (canvasH - p.top - p.bottom) / rows),
+  )
   return {
     zoom,
     dpr,
-    panX: (canvasW - cols * zoom) / 2,
-    panY: (canvasH - rows * zoom) / 2,
+    panX: p.left + (canvasW - p.left - p.right - cols * zoom) / 2,
+    panY: p.top + (canvasH - p.top - p.bottom - rows * zoom) / 2,
   }
 }
 

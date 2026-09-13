@@ -1,10 +1,14 @@
+import { X } from '@phosphor-icons/react'
+
 import { t } from '../i18n/zh'
+import { MOTION, usePresence } from '../motion'
 import { useEditor } from '../editor/store'
-import { Btn, Dropdown, MenuItem } from './ui'
+import { Z } from './overlayState'
+import { Btn, Menu, MenuItem } from './ui'
 
 /**
- * 选区操作条：只在真有选区时出现在画布上沿，esc / 取消选区后就消失。
- * 剪切、粘贴、反选、整图位移这些低频动作收在「更多」里。
+ * 选区操作条（spec 5.8）：只在有选区时出现，位于启动器那行之下、画布中央。
+ * 填色/复制/清除/变换/更多/取消；剪切、粘贴、反选、全选收在「更多」里。
  */
 export default function SelectionBar() {
   const selection = useEditor((s) => s.selection)
@@ -14,21 +18,34 @@ export default function SelectionBar() {
   // 动作是稳定引用，不需要订阅（订阅了反而每笔拖拽都重渲染整条栏）
   const a = useEditor.getState()
 
-  if (selection.length === 0) return null
+  const open = selection.length > 0
+  const { ref, shown, exiting } = usePresence(open, {
+    from: { opacity: 0, y: -6 },
+    to: { opacity: 1, y: 0 },
+    exit: { opacity: 0, y: -6 },
+    enterDuration: MOTION.contextual,
+    exitDuration: 0.12,
+  })
+
+  if (!shown) return null
 
   return (
     <div
+      ref={ref}
       role="toolbar"
       aria-label={copy.selection}
-      className="absolute top-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full border border-neutral-300 bg-white/95 px-1.5 py-1 shadow"
+      style={{ zIndex: Z.controls }}
+      className={`absolute top-16 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-line bg-surface px-1.5 py-1 shadow-md ${
+        exiting ? 'pointer-events-none' : ''
+      }`}
     >
-      <span className="px-1 text-[11px] text-neutral-500">{selection.length} 个矩形</span>
-      <Btn onClick={() => a.fillSel(colorIndex)} title="把选区填成当前色号">
+      <span className="px-1 text-xs text-ink-2 tabular">{copy.selCount(selection.length)}</span>
+      <Btn onClick={() => a.fillSel(colorIndex)} title={copy.fill}>
         {copy.selFill}
       </Btn>
       <Btn onClick={a.copySel}>{copy.copy}</Btn>
       <Btn onClick={a.eraseSel}>{copy.erase}</Btn>
-      <Dropdown label={copy.selTransform} width="w-40">
+      <Menu label={copy.selTransform} width="w-44" triggerVariant="ghost">
         {(close) => (
           <>
             <MenuItem
@@ -65,8 +82,8 @@ export default function SelectionBar() {
             </MenuItem>
           </>
         )}
-      </Dropdown>
-      <Dropdown label={copy.selMore} width="w-44">
+      </Menu>
+      <Menu label={copy.selMore} width="w-44" triggerVariant="ghost">
         {(close) => (
           <>
             <MenuItem
@@ -103,25 +120,17 @@ export default function SelectionBar() {
             >
               {copy.selSelectAll}
             </MenuItem>
-            <MenuItem
-              onClick={() => {
-                a.clearSel()
-                close()
-              }}
-            >
-              {copy.selCancel}
-            </MenuItem>
           </>
         )}
-      </Dropdown>
+      </Menu>
       <button
         type="button"
         onClick={a.clearSel}
         aria-label={copy.selCancel}
         title={copy.selCancel}
-        className="ml-0.5 flex h-6 w-6 items-center justify-center rounded-full text-xs text-neutral-500 hover:bg-neutral-100"
+        className="ml-0.5 flex h-8 w-8 items-center justify-center rounded-lg text-ink-2 hover:bg-hover"
       >
-        ✕
+        <X size={14} aria-hidden />
       </button>
     </div>
   )

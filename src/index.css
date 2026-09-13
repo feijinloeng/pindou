@@ -1,8 +1,112 @@
 @import "tailwindcss";
 
+/**
+ * 语义 token：所有界面 chrome 都从这里取色，豆子本身的颜色不经过这里。
+ * 暗色只换 chrome，图案 HEX / 白板参考色 / 导出产物永远不变。
+ */
+:root {
+  --workspace: #f2f4f3;
+  --surface: #fcfdfc;
+  --hover: #e9eeeb;
+  --ink: #202a24;
+  --ink-2: #59665e;
+  --line: #d8e0da;
+  --accent: #2d624b;
+  --on-accent: #ffffff;
+  --focus: #2d624b;
+  --danger: #b4433a;
+  --warn-bg: #fdf6e3;
+  --warn-ink: #8a5a00;
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --workspace: #171c1a;
+  --surface: #222925;
+  --hover: #2d3731;
+  --ink: #edf3ef;
+  --ink-2: #b6c3ba;
+  --line: #46544b;
+  --accent: #9acbad;
+  --on-accent: #17271d;
+  --focus: #9acbad;
+  --danger: #e08a82;
+  --warn-bg: #3a3220;
+  --warn-ink: #e8c780;
+  color-scheme: dark;
+}
+
+/* 让 Tailwind 工具类引用运行时变量：bg-surface / text-ink / border-line … */
+@theme inline {
+  --color-workspace: var(--workspace);
+  --color-surface: var(--surface);
+  --color-hover: var(--hover);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-focus: var(--focus);
+  --color-danger: var(--danger);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-ink: var(--warn-ink);
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--workspace);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 焦点环两个主题都要看得见；键盘聚焦才出环，鼠标点不出 */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* 静态状态的颜色/边框过渡归 CSS；位移和透明度归 GSAP。不写 transition: all */
+button,
+input,
+select,
+[role='button'] {
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+/* 减少动态效果：CSS 侧一律即时。GSAP 侧由 motion.ts 的 reducedMotion() 兜 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+[data-motion='reduced'] *,
+[data-motion='reduced'] *::before,
+[data-motion='reduced'] *::after {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+}
+
+/* 数字计数统一表格数字，不跳宽度 */
+.tabular {
+  font-variant-numeric: tabular-nums;
 }

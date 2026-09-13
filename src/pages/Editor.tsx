@@ -1,16 +1,20 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
-import { startAutosave } from '../storage/autosave'
 import { shouldHandleCanvasKey } from '../editor/keyboard'
+import { escapeTopmost, hasOverlay } from '../components/overlayState'
 
 import BoardPicker from './BoardPicker'
 import CanvasStage from '../components/CanvasStage'
 import ExportStage from '../components/ExportStage'
+import NoticeHost from '../components/NoticeHost'
 import PanelHost from '../components/PanelHost'
 import SelectionBar from '../components/SelectionBar'
-import ToolRail from '../components/ToolRail'
+import ToolDock from '../components/ToolRail'
 import Toolbar from '../components/Toolbar'
+import WorkspaceControls from '../components/WorkspaceControls'
 import { useEditor, type ToolId } from '../editor/store'
+import { useUi } from '../editor/uiState'
+import { gsap, MOTION, reducedMotion, useGSAP } from '../motion'
 
 const TOOL_KEYS: Record<string, ToolId> = {
   v: 'select',
@@ -22,10 +26,20 @@ const TOOL_KEYS: Record<string, ToolId> = {
 }
 
 export default function Editor() {
-  const notice = useEditor((s) => s.notice)
   const pickerOpen = useEditor((s) => s.pickerOpen)
   const stage = useEditor((s) => s.stage)
-  const setNotice = useEditor((s) => s.setNotice)
+  const focusMode = useUi((s) => s.focusMode)
+  const editing = !pickerOpen && stage === 'edit'
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // 首次编辑器显示：头 180ms、画布 220ms、dock 240ms，总时长不超 400ms。
+  useGSAP(() => {
+    if (reducedMotion()) return
+    const tl = gsap.timeline()
+    tl.from('.editor-header', { opacity: 0, duration: 0.18, ease: MOTION.easeOut })
+      .from('.canvas-layer', { opacity: 0, duration: 0.22, ease: MOTION.easeOut }, '<0.02')
+      .from('.tool-dock', { opacity: 0, y: 8, duration: 0.24, ease: MOTION.easeOut }, '<0.04')
+  }, { scope: rootRef })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -35,6 +49,16 @@ export default function Editor() {
       // 选板页和导出页不是画布：除了 Escape，快捷键一律不响应
       if ((s.pickerOpen || s.stage === 'export') && e.key !== 'Escape') return
       const mod = e.metaKey || e.ctrlKey
+      if (e.key === 'Escape') {
+        // 一次只退一层：浮层栈顶 → 面板 → 选区 → 专注模式
+        if (escapeTopmost()) return
+        if (s.panel) s.openPanel(null)
+        else if (s.selection.length) s.clearSel()
+        else if (useUi.getState().focusMode) useUi.getState().setFocusMode(false)
+        return
+      }
+      // 菜单/对话框开着的时候，字母键是浮层的，不是画布的
+      if (hasOverlay()) return
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) s.redo()
@@ -61,12 +85,6 @@ export default function Editor() {
         s.pasteSel()
         return
       }
-      if (e.key === 'Escape') {
-        // Escape 先收面板，再收选区 —— 一次只退一层
-        if (s.panel) s.openPanel(null)
-        else s.clearSel()
-        return
-      }
       const tool = TOOL_KEYS[e.key.toLowerCase()]
       if (tool && !mod) s.setTool(tool)
     }
@@ -74,50 +92,44 @@ export default function Editor() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // 编辑自动保存（debounce 2 秒），跟做进度立刻写。
-  // 必须把取消订阅的函数交回去：切换页面后旧订阅还活着会重复写盘。
-  useEffect(() => startAutosave(), [])
-
-  // 刷新回来时把上次的草稿捡回来（第 14.1 节：编辑到一半刷新不丢）
-  useEffect(() => {
-    const state = useEditor.getState()
-    const boot = state.projectId === 'local-draft' ? state.restoreLast() : Promise.resolve(false)
-    // 源图只存了小图副本：捡回来是为了能重新转换，不是“原图还在”
-    void boot.then(() => useEditor.getState().restoreSourceImage())
-  }, [])
-
-  useEffect(() => {
-    if (!notice) return
-    const timer = setTimeout(() => setNotice(null), 4000)
-    return () => clearTimeout(timer)
-  }, [notice, setNotice])
-
   return (
-    <div className="flex h-full flex-col">
-      <Toolbar />
-      {pickerOpen ? (
-        <BoardPicker />
-      ) : stage === 'export' ? (
-        <ExportStage />
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          <ToolRail />
-          <div className="relative min-w-0 flex-1">
-            <CanvasStage />
-            <SelectionBar />
-            <PanelHost />
-            {notice && (
-              <div
-                role="status"
-                aria-live="polite"
-                className="pointer-events-none absolute bottom-3 left-3 z-30 rounded bg-neutral-900/85 px-3 py-1.5 text-xs text-white"
-              >
-                {notice}
-              </div>
-            )}
-          </div>
+    <div ref={rootRef} className="flex h-full flex-col bg-workspace text-ink">
+      {/* 专注模式：头部高度保留（不跳布局），内容淡出融进工作区 */}
+      <div
+        className={`editor-header shrink-0 transition-opacity ${focusMode ? 'pointer-events-none opacity-0' : ''}`}
+      >
+        <Toolbar />
+      </div>
+
+      <div className="relative min-h-0 flex-1">
+        {/* 画布常驻：导出/选板只是盖在它上面，回来视口、工具、选区都还是原来那一眼 */}
+        <div
+          className={`canvas-layer absolute inset-0 ${editing ? '' : 'pointer-events-none invisible'}`}
+          aria-hidden={!editing}
+        >
+          <CanvasStage />
         </div>
-      )}
+
+        {pickerOpen ? (
+          <div className="absolute inset-0 flex flex-col bg-workspace">
+            <BoardPicker />
+          </div>
+        ) : stage === 'export' ? (
+          <div className="absolute inset-0 flex flex-col bg-workspace">
+            <ExportStage />
+          </div>
+        ) : (
+          <>
+            <WorkspaceControls />
+            {!focusMode && <SelectionBar />}
+            {!focusMode && <PanelHost />}
+            <ToolDock />
+          </>
+        )}
+
+        {/* 通知挂在所有子状态之上：导出失败、转换完成在哪个页面都看得见 */}
+        <NoticeHost />
+      </div>
     </div>
   )
 }

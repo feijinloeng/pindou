@@ -1,59 +1,118 @@
+import { useEffect, useRef, useState } from 'react'
+import { PushPin, X } from '@phosphor-icons/react'
+
 import ColorList from './ColorList'
 import ConvertPanel from './ConvertPanel'
+import TransformPanel from './TransformPanel'
 import { t } from '../i18n/zh'
-import { useEditor } from '../editor/store'
+import { gsap, MOTION, reducedMotion, usePresence } from '../motion'
+import { useEditor, type PanelId } from '../editor/store'
+import { Modal } from './ui'
+import { useMediaQuery } from './media'
+import { Z } from './overlayState'
+
+const TITLES: Record<PanelId, string> = {
+  image: t('convert').title,
+  color: t('editor').colors,
+  transform: t('editor').transformTitle,
+}
 
 /**
- * 临时面板宿主：同一时间最多开一个，浮在画布右缘。
- * 用浮层而不是挤压画布宽度，开合面板就不会把用户的编辑目标推出视野、也不会重置缩放。
+ * 辅助面板宿主（spec 5.5）：同一时间一个面板，浮在画布左上，不挤压画布、不动缩放。
+ * 退出时立刻不可交互，播完才卸载；退出途中重开会杀掉旧退出回调。
+ * 换面板类型：外框不动，内容 140ms 交叉淡入。
  */
 export default function PanelHost() {
   const panel = useEditor((s) => s.panel)
   const openPanel = useEditor((s) => s.openPanel)
-  const colorPinned = useEditor((s) => s.colorPinned)
-  const setColorPinned = useEditor((s) => s.setColorPinned)
-  const copy = t('editor')
-  if (!panel) return null
+  const mobile = useMediaQuery('(max-width: 767px)')
+  const open = panel !== null
+
+  // 内容身份：退出动画期间还得显示旧面板，所以本地留一份
+  const [shown, setShown] = useState<PanelId | null>(panel)
+  if (panel && panel !== shown) setShown(panel)
+
+  const { ref, shown: frameShown, exiting } = usePresence(open, {
+    from: { opacity: 0, x: -12 },
+    to: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: -8 },
+    enterDuration: MOTION.panelIn,
+    exitDuration: MOTION.panelOut,
+  })
+
+  // 换面板类型：外框不动，内容交叉淡入
+  const contentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el || !shown || reducedMotion()) return
+    gsap.fromTo(el, { opacity: 0 }, { opacity: 1, duration: MOTION.fade, ease: MOTION.easeOut })
+  }, [shown])
+
+  if (!frameShown || !shown) return null
+
+  const body = (
+    <div ref={contentRef} className="flex min-h-0 flex-1 flex-col">
+      {shown === 'color' ? <ColorList /> : shown === 'image' ? <ConvertPanel /> : <TransformPanel />}
+    </div>
+  )
+
+  if (mobile) {
+    // 移动 sheet 是模态：焦点圈内、背景惰性、Escape/背板关闭（Modal 都包了）
+    return (
+      <Modal open={open} onClose={() => openPanel(null)} title={TITLES[shown]} sheet>
+        <PanelHeader shown={shown} onClose={() => openPanel(null)} />
+        {body}
+      </Modal>
+    )
+  }
 
   return (
     <aside
-      aria-label={panel === 'color' ? copy.colors : t('convert').title}
-      className="absolute top-0 right-0 z-20 flex h-full w-72 flex-col border-l border-neutral-200 bg-white shadow-xl"
+      ref={ref}
+      aria-label={TITLES[shown]}
+      style={{ zIndex: Z.panel }}
+      className={`absolute top-16 bottom-[88px] left-4 flex w-80 flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-lg ${
+        exiting ? 'pointer-events-none' : ''
+      }`}
     >
-      <header className="flex items-center gap-2 border-b border-neutral-200 px-3 py-2">
-        <h2 className="text-xs font-semibold">
-          {panel === 'color' ? copy.colors : t('convert').title}
-        </h2>
-        {panel === 'color' ? (
+      <PanelHeader shown={shown} onClose={() => openPanel(null)} />
+      {body}
+    </aside>
+  )
+}
+
+function PanelHeader({ shown, onClose }: { shown: PanelId; onClose: () => void }) {
+  const colorPinned = useEditor((s) => s.colorPinned)
+  const setColorPinned = useEditor((s) => s.setColorPinned)
+  const copy = t('editor')
+  return (
+    <header className="flex h-12 shrink-0 items-center gap-1 border-b border-line px-3">
+      <h2 className="text-base font-semibold">{TITLES[shown]}</h2>
+      <div className="ml-auto flex items-center gap-1">
+        {shown === 'color' && (
           <button
             type="button"
             aria-pressed={colorPinned}
-            onClick={() => setColorPinned(!colorPinned)}
+            aria-label={copy.pinColorHint}
             title={copy.pinColorHint}
-            className={`ml-auto rounded border px-2 py-0.5 text-[11px] ${
-              colorPinned
-                ? 'border-neutral-900 bg-neutral-900 text-white'
-                : 'border-neutral-300 text-neutral-600 hover:bg-neutral-100'
+            onClick={() => setColorPinned(!colorPinned)}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+              colorPinned ? 'bg-accent text-on-accent' : 'text-ink-2 hover:bg-hover'
             }`}
           >
-            {copy.pinColor}
+            <PushPin size={16} weight={colorPinned ? 'fill' : 'regular'} aria-hidden />
           </button>
-        ) : null}
+        )}
         <button
           type="button"
-          onClick={() => openPanel(null)}
+          onClick={onClose}
           aria-label={copy.closePanel}
           title={copy.closePanel}
-          className={`flex h-6 w-6 items-center justify-center rounded text-xs text-neutral-500 hover:bg-neutral-100 ${
-            panel === 'color' ? '' : 'ml-auto'
-          }`}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-2 hover:bg-hover"
         >
-          ✕
+          <X size={16} aria-hidden />
         </button>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {panel === 'color' ? <ColorList /> : <ConvertPanel />}
       </div>
-    </aside>
+    </header>
   )
 }

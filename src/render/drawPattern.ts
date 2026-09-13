@@ -30,6 +30,8 @@ export interface DrawPatternOptions {
    * completed 里标 1 的格子是已经拼完的，也画淡。
    */
   focus?: { colorIndex: number | null; completed?: Uint8Array | null } | null
+  /** 屏幕上的板框颜色：默认共享常量；编辑器/跟做传中性色，导出文档不受影响 */
+  seamColor?: string
 }
 
 /**
@@ -229,7 +231,7 @@ function drawCodes(
 function drawBoardFrames(ctx: CanvasRenderingContext2D, o: DrawPatternOptions): void {
   const { vp } = o
   const z = vp.zoom
-  ctx.strokeStyle = SEAM_COLOR
+  ctx.strokeStyle = o.seamColor ?? SEAM_COLOR
   ctx.lineWidth = 1.5
   ctx.setLineDash([])
   ctx.beginPath()

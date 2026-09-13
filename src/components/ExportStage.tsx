@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Check, Warning } from '@phosphor-icons/react'
 
 import { usedCells } from '../domain/grid'
 import { useEditor } from '../editor/store'
@@ -11,7 +12,8 @@ import {
   type ExportSelection,
 } from '../render/exporters'
 import { renderThumbnailDataUrl } from '../render/thumbnail'
-import { PrimaryBtn } from './ui'
+import { useOverlayEscape } from './overlayState'
+import { Btn, Disclosure } from './ui'
 
 interface ExportFlags {
   preview: boolean
@@ -21,8 +23,9 @@ interface ExportFlags {
 }
 
 /**
- * 导出目的地：保存成功后才进得来，进来就是成品预览 + 按用途选输出。
- * 选项跟着用途展开，不要求用户先理解 PNG / PDF / CSV 各是什么。
+ * 导出（spec 9）：左边真实预览，右边 380px 输出列。
+ * 四个输出可一起选（至少留一个），选项只跟着被选的那行展开；
+ * 预估和警告在导出按钮之前常显。多个输出仍然打包成一个 zip。
  */
 export default function ExportStage() {
   const grid = useEditor((s) => s.grid)
@@ -46,6 +49,9 @@ export default function ExportStage() {
   const [thumb, setThumb] = useState<string | null>(null)
   const copy = t('export')
 
+  // Escape = 返回编辑；导出进行中不让退（文件生成到一半走了会以为失败）
+  useOverlayEscape(!busy, closeExport)
+
   const selection: ExportSelection = {
     ...flags,
     paperScope,
@@ -66,7 +72,7 @@ export default function ExportStage() {
       setThumb(null)
       return
     }
-    const handle = setTimeout(() => setThumb(renderThumbnailDataUrl(grid, palette, 360)), 0)
+    const handle = setTimeout(() => setThumb(renderThumbnailDataUrl(grid, palette, 480)), 0)
     return () => clearTimeout(handle)
   }, [grid, palette, empty])
 
@@ -99,9 +105,13 @@ export default function ExportStage() {
         .getState()
         .setNotice(bundle.warnings.length > 0 ? `${head}。${bundle.warnings.join('；')}` : head)
     } catch (error) {
+      // 失败要常显：配置原样留着，重试就在按钮上
       useEditor
         .getState()
-        .setNotice(error instanceof Error ? `${copy.exportFailed}：${error.message}` : copy.exportFailed)
+        .setNotice(
+          error instanceof Error ? `${copy.exportFailed}：${error.message}` : copy.exportFailed,
+          'error',
+        )
     } finally {
       setBusy(false)
     }
@@ -109,52 +119,44 @@ export default function ExportStage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-neutral-200 bg-white px-4 py-2">
-        <button
-          type="button"
-          onClick={closeExport}
-          className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100"
-        >
-          {copy.backToEdit}
-        </button>
-        <h2 className="text-sm font-semibold">
-          {copy.title}·{name}
-        </h2>
-      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+        <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+          {/* 左：真实预览，占足视觉空间 */}
+          <section
+            aria-label={copy.previewTitle}
+            className="flex items-center justify-center rounded-xl border border-line bg-surface p-4"
+          >
+            {empty ? (
+              <div className="flex flex-col items-center gap-3 py-16 text-center">
+                <p className="text-sm text-ink-2">{copy.emptyDesign}</p>
+                <Btn variant="primary" onClick={closeExport}>
+                  {copy.backToEdit}
+                </Btn>
+              </div>
+            ) : thumb ? (
+              <img
+                src={thumb}
+                alt={copy.previewTitle}
+                className="max-h-[60vh] max-w-full object-contain"
+              />
+            ) : (
+              <p className="py-16 text-sm text-ink-2">…</p>
+            )}
+          </section>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-          <div className="flex flex-col gap-4">
-            <section className="rounded border border-neutral-200 bg-white p-3">
-              <h3 className="mb-2 text-[11px] font-semibold tracking-wide text-neutral-500">
-                {copy.previewTitle}
-              </h3>
-              {empty ? (
-                <p className="text-xs text-neutral-500">{copy.emptyDesign}</p>
-              ) : thumb ? (
-                <img
-                  src={thumb}
-                  alt=""
-                  className="max-h-72 max-w-full rounded border border-neutral-200 bg-neutral-50"
-                />
-              ) : (
-                <p className="text-xs text-neutral-400">…</p>
-              )}
-            </section>
+          {/* 右：输出列 */}
+          <div className="flex flex-col gap-3 self-start">
+            <h3 className="text-base font-semibold">{copy.purposeTitle}</h3>
 
-            <section className="flex flex-col gap-2">
-              <h3 className="text-[11px] font-semibold tracking-wide text-neutral-500">
-                {copy.purposeTitle}
-              </h3>
-
-              <Purpose
+            <fieldset disabled={busy} className="flex flex-col gap-2">
+              <OutputRow
                 checked={flags.preview}
                 onToggle={(v) => toggle('preview', v)}
                 title={copy.purposeShare}
                 hint={copy.purposeShareHint}
               >
                 <select
-                  className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs"
+                  className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
                   value={previewScale}
                   aria-label={copy.preview}
                   onChange={(e) => setPreviewScale(Number(e.target.value))}
@@ -163,15 +165,15 @@ export default function ExportStage() {
                   <option value={16}>{copy.previewHd}</option>
                   <option value={32}>{copy.previewPrint}</option>
                 </select>
-              </Purpose>
+              </OutputRow>
 
-              <Purpose
+              <OutputRow
                 checked={flags.screen}
                 onToggle={(v) => toggle('screen', v)}
                 title={copy.purposeScreen}
                 hint={copy.purposeScreenHint}
               >
-                <label className="flex items-center gap-2 text-xs text-neutral-600">
+                <label className="flex items-center gap-2 text-sm text-ink-2">
                   <input
                     type="checkbox"
                     checked={screenCodes}
@@ -179,7 +181,7 @@ export default function ExportStage() {
                   />
                   {copy.screenCodes}
                 </label>
-                <label className="flex items-center gap-2 text-xs text-neutral-600">
+                <label className="flex items-center gap-2 text-sm text-ink-2">
                   <input
                     type="checkbox"
                     checked={screenBom}
@@ -187,16 +189,16 @@ export default function ExportStage() {
                   />
                   {copy.screenBom}
                 </label>
-              </Purpose>
+              </OutputRow>
 
-              <Purpose
+              <OutputRow
                 checked={flags.paper}
                 onToggle={(v) => toggle('paper', v)}
                 title={copy.purposePrint}
                 hint={copy.purposePrintHint}
               >
                 <select
-                  className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs"
+                  className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
                   value={paperScope}
                   aria-label={copy.paper}
                   onChange={(e) => setPaperScope(e.target.value as 'boards' | 'zip')}
@@ -204,7 +206,7 @@ export default function ExportStage() {
                   <option value="boards">{copy.scopeBoards}</option>
                   <option value="zip">{copy.scopeZip}</option>
                 </select>
-                <label className="flex items-center gap-2 text-xs text-neutral-600">
+                <label className="flex items-center gap-2 text-sm text-ink-2">
                   <input
                     type="checkbox"
                     checked={showCodes}
@@ -212,21 +214,20 @@ export default function ExportStage() {
                   />
                   {copy.paperCodes}
                 </label>
-              </Purpose>
+              </OutputRow>
 
-              <Purpose
+              <OutputRow
                 checked={flags.csv}
                 onToggle={(v) => toggle('csv', v)}
                 title={copy.purposeMaterials}
                 hint={copy.purposeMaterialsHint}
               />
-            </section>
-          </div>
+            </fieldset>
 
-          <div className="flex flex-col gap-3 self-start lg:sticky lg:top-0">
-            <div className="rounded border border-neutral-200 bg-white p-3 text-[11px] leading-relaxed text-neutral-600">
-              <p className="font-semibold text-neutral-700">{copy.estimateTitle}</p>
-              <ul className="mt-1 flex flex-col gap-0.5">
+            {/* 预估和警告：在导出按钮之前常显 */}
+            <div className="rounded-xl border border-line bg-surface p-3 text-xs leading-relaxed text-ink-2">
+              <p className="font-semibold text-ink">{copy.estimateTitle}</p>
+              <ul className="mt-1 flex flex-col gap-0.5 tabular">
                 {flags.preview && (
                   <li>
                     {copy.estimatePreview}：{estimate.previewWidth} × {estimate.previewHeight} px
@@ -248,25 +249,27 @@ export default function ExportStage() {
                 <li>
                   {copy.estimateName}：{truncatedName || baseName}
                   {truncatedName && (
-                    <span className="text-amber-700">（原文件名超过 60 字，已截断）</span>
+                    <span className="text-warn-ink">（原文件名超过 60 字，已截断）</span>
                   )}
                 </li>
               </ul>
               {estimate.warnings.map((warning) => (
-                <p key={warning} role="status" className="mt-1 text-amber-700">
+                <p key={warning} role="status" className="mt-1 flex items-start gap-1 text-warn-ink">
+                  <Warning size={13} className="mt-0.5 shrink-0" aria-hidden />
                   {warning}
                 </p>
               ))}
             </div>
 
-            <PrimaryBtn onClick={() => void run()} disabled={busy || empty}>
+            <Btn variant="primary" onClick={() => void run()} disabled={busy || empty}>
               {busy ? copy.exporting : copy.run}
-            </PrimaryBtn>
+            </Btn>
 
-            <details className="text-[11px] leading-relaxed text-neutral-500">
-              <summary className="cursor-pointer">{copy.helpTitle}</summary>
-              <p className="mt-1 whitespace-pre-line">{copy.help}</p>
-            </details>
+            <Disclosure summary={copy.helpTitle}>
+              <p className="mt-1 text-xs leading-relaxed whitespace-pre-line text-ink-2">
+                {copy.help}
+              </p>
+            </Disclosure>
           </div>
         </div>
       </div>
@@ -274,8 +277,8 @@ export default function ExportStage() {
   )
 }
 
-/** 一个用途 = 一个勾 + 勾上才展开的选项 */
-function Purpose({
+/** 一个输出 = 一整行可选；勾上才在这行底下展开它自己的选项 */
+function OutputRow({
   checked,
   onToggle,
   title,
@@ -290,23 +293,31 @@ function Purpose({
 }) {
   return (
     <div
-      className={`rounded border bg-white p-3 ${
-        checked ? 'border-neutral-900' : 'border-neutral-200'
+      className={`rounded-xl border bg-surface px-3 py-2.5 ${
+        checked ? 'border-accent' : 'border-line'
       }`}
     >
-      <label className="flex items-start gap-2 text-sm">
+      <label className="flex cursor-pointer items-center gap-2.5">
         <input
           type="checkbox"
-          className="mt-0.5"
+          className="sr-only"
           checked={checked}
           onChange={(e) => onToggle(e.target.checked)}
         />
-        <span>
+        <span
+          aria-hidden
+          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
+            checked ? 'border-accent bg-accent text-on-accent' : 'border-line bg-surface'
+          }`}
+        >
+          {checked && <Check size={12} weight="bold" />}
+        </span>
+        <span className="text-sm font-medium text-ink">
           {title}
-          <span className="block text-[11px] text-neutral-500">{hint}</span>
+          <span className="block text-xs font-normal text-ink-2">{hint}</span>
         </span>
       </label>
-      {checked && children && <div className="mt-2 flex flex-col gap-2 pl-6">{children}</div>}
+      {checked && children && <div className="mt-2 flex flex-col gap-2 pl-7">{children}</div>}
     </div>
   )
 }
