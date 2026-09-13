@@ -1,5 +1,5 @@
+import { boardGuide, type BoardGeometry } from '../domain/board'
 import { EMPTY, isPlaceable, type CellGrid } from '../domain/grid'
-import type { BoardGeometry } from '../domain/board'
 import { PT_PER_MM } from '../domain/geometry'
 import { hexToRgb, type Palette, labelTextColor } from '../domain/palette'
 import { buildBom, drawBom } from './bom'
@@ -7,11 +7,13 @@ import { planAnnotations, screenLayout, SCREEN_PAD_PT, type AnnotationPlan } fro
 import { BOARD_BG } from './colors'
 import { gray255, type PdfSink } from './pdf'
 
-/** 网格线颜色（第 7.7 节）：细网格 0.25pt 灰 0.6，主网格 0.5pt 灰 0.75 */
+/** 整块板的灰色细网格；黑色虚线下方的线段留空避免叠线 */
 export const THIN_GRID = { widthPt: 0.25, rgb: gray255(0.6) }
-export const MAIN_GRID = { widthPt: 0.5, rgb: gray255(0.75) }
-/** 板缝红色，页缝蓝色虚线 —— 两者必须一眼能区分 */
-export const BOARD_SEAM = { widthPt: 1.5, rgb: [209, 43, 43] as [number, number, number] }
+/** 实体 mini 板上的 10×10 黑色实线框，线宽沿用灰色细网格 */
+export const BOARD_GUIDE = { widthPt: THIN_GRID.widthPt, rgb: [0, 0, 0] as [number, number, number] }
+/** 每个 10×10 单元中间的 5×5 黑色虚线十字，线宽同样不加粗 */
+export const BOARD_GUIDE_DASH = { widthPt: THIN_GRID.widthPt, rgb: [0, 0, 0] as [number, number, number] }
+/** 页缝蓝色虚线；和实体板的黑色线分开 */
 export const SHEET_SEAM = { widthPt: 0.8, rgb: [26, 89, 217] as [number, number, number] }
 
 export interface ScreenPdfOptions {
@@ -65,12 +67,11 @@ export function renderScreenPdf(sink: PdfSink, options: ScreenPdfOptions): Scree
     // 豆子：按色分桶
     drawCells(sink, grid, palette, sheet, margin, P)
 
-    // 网格线：细网格每格一条，主网格每 10 格一条（一条 path 一次描边）
-    strokeGrid(sink, sheet, margin, P, THIN_GRID, 1)
-    strokeGrid(sink, sheet, margin, P, MAIN_GRID, 10)
+    // 10×10 工作区保留灰格，黑色虚线下方的灰线段留空
+    strokeGrid(sink, sheet, margin, P, THIN_GRID, 1, geom)
 
-    // 板缝：红色实线，和页缝明显不同
-    strokeBoardSeams(sink, geom, sheet, margin, P)
+    // 实体板定位线：黑色 10 格实线 + 5 格虚线十字
+    strokeBoardGuides(sink, geom, sheet, margin, P)
 
     // 坐标数字
     drawCoordinates(sink, sheet, margin, P, 10)
@@ -174,59 +175,131 @@ export function drawCells(
 
 export function strokeGrid(
   sink: PdfSink,
-  sheet: { cols: number; rows: number },
+  sheet: { col0: number; row0: number; cols: number; rows: number },
   origin: { x: number; y: number },
   P: number,
   style: { widthPt: number; rgb: readonly [number, number, number] },
   every: number,
+  geom?: BoardGeometry,
 ): void {
   sink.strokeColor(style.rgb)
   sink.lineWidth(style.widthPt)
   sink.dash([])
-  for (let x = 0; x <= sheet.cols; x += every) {
-    sink.moveTo(origin.x + x * P, origin.y)
-    sink.lineTo(origin.x + x * P, origin.y + sheet.rows * P)
+
+  const vertical = (x: number, top: number, bottom: number) => {
+    if (x < sheet.col0 || x > sheet.col0 + sheet.cols) return
+    const clippedTop = Math.max(top, sheet.row0)
+    const clippedBottom = Math.min(bottom, sheet.row0 + sheet.rows)
+    if (clippedTop >= clippedBottom) return
+    const px = origin.x + (x - sheet.col0) * P
+    sink.moveTo(px, origin.y + (sheet.rows - (clippedBottom - sheet.row0)) * P)
+    sink.lineTo(px, origin.y + (sheet.rows - (clippedTop - sheet.row0)) * P)
   }
-  if (sheet.cols % every !== 0) {
-    sink.moveTo(origin.x + sheet.cols * P, origin.y)
-    sink.lineTo(origin.x + sheet.cols * P, origin.y + sheet.rows * P)
+  const horizontal = (y: number, left: number, right: number) => {
+    if (y < sheet.row0 || y > sheet.row0 + sheet.rows) return
+    const clippedLeft = Math.max(left, sheet.col0)
+    const clippedRight = Math.min(right, sheet.col0 + sheet.cols)
+    if (clippedLeft >= clippedRight) return
+    const py = origin.y + (sheet.rows - (y - sheet.row0)) * P
+    sink.moveTo(origin.x + (clippedLeft - sheet.col0) * P, py)
+    sink.lineTo(origin.x + (clippedRight - sheet.col0) * P, py)
   }
-  for (let y = 0; y <= sheet.rows; y += every) {
-    sink.moveTo(origin.x, origin.y + y * P)
-    sink.lineTo(origin.x + sheet.cols * P, origin.y + y * P)
+  const drawRegion = (
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+    guide: ReturnType<typeof boardGuide>,
+  ) => {
+    for (let x = left; x <= right; x += every) {
+      if (guide?.dashedCols.includes(x)) {
+        vertical(x, top, guide.top)
+        vertical(x, guide.bottom, bottom)
+      } else {
+        vertical(x, top, bottom)
+      }
+    }
+    if ((right - left) % every !== 0) vertical(right, top, bottom)
+    for (let y = top; y <= bottom; y += every) {
+      if (guide?.dashedRows.includes(y)) {
+        horizontal(y, left, guide.left)
+        horizontal(y, guide.right, right)
+      } else {
+        horizontal(y, left, right)
+      }
+    }
+    if ((bottom - top) % every !== 0) horizontal(bottom, left, right)
   }
-  if (sheet.rows % every !== 0) {
-    sink.moveTo(origin.x, origin.y + sheet.rows * P)
-    sink.lineTo(origin.x + sheet.cols * P, origin.y + sheet.rows * P)
+
+  if (geom) {
+    for (const board of geom.boards) {
+      drawRegion(board.c0, board.r0, board.c0 + board.cw, board.r0 + board.rh, boardGuide(board))
+    }
+  } else {
+    drawRegion(sheet.col0, sheet.row0, sheet.col0 + sheet.cols, sheet.row0 + sheet.rows, null)
   }
   sink.stroke()
 }
 
-export function strokeBoardSeams(
+/** Draw each board's real solid boundaries and dashed center crosses. */
+export function strokeBoardGuides(
   sink: PdfSink,
   geom: BoardGeometry,
   sheet: { col0: number; row0: number; cols: number; rows: number },
   origin: { x: number; y: number },
   P: number,
 ): void {
-  sink.strokeColor(BOARD_SEAM.rgb)
-  sink.lineWidth(BOARD_SEAM.widthPt)
-  sink.dash([])
-  // 按块画框：板可以错开自由摆放，贯穿线画不准
+  strokeGuideLayer(sink, geom, sheet, origin, P, false)
+  strokeGuideLayer(sink, geom, sheet, origin, P, true)
+}
+
+function strokeGuideLayer(
+  sink: PdfSink,
+  geom: BoardGeometry,
+  sheet: { col0: number; row0: number; cols: number; rows: number },
+  origin: { x: number; y: number },
+  P: number,
+  dashed: boolean,
+): void {
+  sink.strokeColor((dashed ? BOARD_GUIDE_DASH : BOARD_GUIDE).rgb)
+  sink.lineWidth((dashed ? BOARD_GUIDE_DASH : BOARD_GUIDE).widthPt)
+  sink.dash(dashed ? [1.5, 1.5] : [])
   let any = false
-  for (const board of geom.boards) {
-    const c0 = board.c0 - sheet.col0
-    const c1 = c0 + board.cw
-    if (c1 < 0 || c0 > sheet.cols) continue
-    const top = board.r0 - sheet.row0
-    const bottom = top + board.rh
-    if (bottom < 0 || top > sheet.rows) continue
-    const x0 = origin.x + Math.max(0, c0) * P
-    const x1 = origin.x + Math.min(sheet.cols, c1) * P
-    const yTop = origin.y + (sheet.rows - Math.max(0, top)) * P
-    const yBottom = origin.y + (sheet.rows - Math.min(sheet.rows, bottom)) * P
-    sink.rect(x0, yBottom, x1 - x0, yTop - yBottom)
+
+  const vertical = (x: number, top: number, bottom: number) => {
+    if (x < sheet.col0 || x > sheet.col0 + sheet.cols) return
+    const clippedTop = Math.max(top, sheet.row0)
+    const clippedBottom = Math.min(bottom, sheet.row0 + sheet.rows)
+    if (clippedTop >= clippedBottom) return
+    const px = origin.x + (x - sheet.col0) * P
+    sink.moveTo(px, origin.y + (sheet.rows - (clippedBottom - sheet.row0)) * P)
+    sink.lineTo(px, origin.y + (sheet.rows - (clippedTop - sheet.row0)) * P)
     any = true
+  }
+  const horizontal = (y: number, left: number, right: number) => {
+    if (y < sheet.row0 || y > sheet.row0 + sheet.rows) return
+    const clippedLeft = Math.max(left, sheet.col0)
+    const clippedRight = Math.min(right, sheet.col0 + sheet.cols)
+    if (clippedLeft >= clippedRight) return
+    const py = origin.y + (sheet.rows - (y - sheet.row0)) * P
+    sink.moveTo(origin.x + (clippedLeft - sheet.col0) * P, py)
+    sink.lineTo(origin.x + (clippedRight - sheet.col0) * P, py)
+    any = true
+  }
+
+  for (const board of geom.boards) {
+    const guide = boardGuide(board)
+    if (guide) {
+      const cols = dashed ? guide.dashedCols : guide.solidCols
+      const rows = dashed ? guide.dashedRows : guide.solidRows
+      for (const x of cols) vertical(x, guide.top, guide.bottom)
+      for (const y of rows) horizontal(y, guide.left, guide.right)
+    } else if (!dashed) {
+      vertical(board.c0, board.r0, board.r0 + board.rh)
+      vertical(board.c0 + board.cw, board.r0, board.r0 + board.rh)
+      horizontal(board.r0, board.c0, board.c0 + board.cw)
+      horizontal(board.r0 + board.rh, board.c0, board.c0 + board.cw)
+    }
   }
   if (any) sink.stroke()
 }

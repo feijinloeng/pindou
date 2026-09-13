@@ -62,15 +62,13 @@ export interface BomDrawOptions {
 }
 
 const COLUMNS: Array<{ key: keyof BomRow | 'swatch'; label: string; weight: number }> = [
-  { key: 'number', label: 'No.', weight: 0.12 },
-  { key: 'swatch', label: 'Color', weight: 0.16 },
-  { key: 'code', label: 'Code', weight: 0.24 },
-  { key: 'hex', label: 'HEX', weight: 0.28 },
-  { key: 'count', label: 'Qty', weight: 0.2 },
+  { key: 'swatch', label: 'Color', weight: 0.5 },
+  { key: 'code', label: 'Code', weight: 0.25 },
+  { key: 'count', label: 'Qty', weight: 0.25 },
 ]
 
 /**
- * 用量清单：五列（编号 / 色块 / 色号 / HEX / 颗数）。
+ * 用量清单：三列（色块 / 色号 / 颗数）。
  * ⚠️ v1 全程避开中文，表头用拉丁字符，保住矢量性（第 11.4 节）。
  * 色块画成实心矩形，不是图片。
  */

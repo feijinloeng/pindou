@@ -10,7 +10,7 @@ import {
 } from './background'
 import { mergeSmallComponents, majorityFilter } from './cleanup'
 import type { PaletteLabEntry, Rgb } from './colorDistance'
-import { cropRect, downscale, fitToAspect, type FitMode } from './downscale'
+import { cropRect, downscale, downscaleContained, fitToAspect, type FitMode } from './downscale'
 import { limitColors, nearestRemap } from './limitColors'
 import { createMatcher, matchWithDither } from './match'
 import { bilateralFilter, luminanceOf, neutralBias } from './preprocess'
@@ -31,13 +31,13 @@ export interface ConversionSettings {
 }
 
 export const DEFAULT_SETTINGS: ConversionSettings = {
-  strategyId: 'auto',
-  maxColors: 24,
-  dither: null,
-  cropToSubject: true,
+  strategyId: 'pixelart',
+  maxColors: 0,
+  dither: 0,
+  cropToSubject: false,
   removeBackground: false,
   clearExisting: true,
-  fit: 'cover',
+  fit: 'contain',
 }
 
 export interface ConvertInput {
@@ -127,8 +127,10 @@ export function convert(input: ConvertInput): ConvertResult {
   }
 
   report('降采样', 0.25)
-  const fitted = fitToAspect(image, cols, rows, settings.fit)
-  const small = downscale(fitted, cols, rows, strategy.downscale)
+  const small =
+    settings.fit === 'contain'
+      ? downscaleContained(image, cols, rows)
+      : downscale(fitToAspect(image, cols, rows, settings.fit), cols, rows, strategy.downscale)
 
   report('预处理', 0.4)
   let rgbData = small.data

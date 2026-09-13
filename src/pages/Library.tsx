@@ -33,7 +33,13 @@ import { Btn, Menu, MenuItem, Modal } from '../components/ui'
 type Tab = 'projects' | 'trash'
 const TRASH_PREFIX = '[已删除] '
 
-export default function Library() {
+export default function Library({
+  embedded = false,
+  onClose,
+}: {
+  embedded?: boolean
+  onClose?: () => void
+} = {}) {
   const [entries, setEntries] = useState<LibraryEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -86,7 +92,8 @@ export default function Library() {
       // 草稿比正式工程新 = 这份内容还没经过一次正式保存，导出前要先保存
       useEditor.getState().loadProject(target, !entry?.hasNewerDraft)
       setError(null)
-      navigate('editor')
+      if (embedded) onClose?.()
+      else navigate('editor')
     } catch (cause) {
       setError(`打开失败：${message(cause)}`)
     }
@@ -173,6 +180,12 @@ export default function Library() {
       .sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
   }, [entries, query, tab])
 
+  const cardEntries = embedded
+    ? entries
+        .filter((entry) => !entry.project.name.startsWith(TRASH_PREFIX))
+        .sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
+    : shown
+
   // 只给前 8 张卡片播入场（spec 12.2：不为一屏之外的卡片付动画钱）。
   // 依赖长度而不是数组本身：重命名也会 refresh，不该因此重播一次入场。
   const gridRef = useRef<HTMLDivElement>(null)
@@ -191,10 +204,18 @@ export default function Library() {
         clearProps: 'transform',
       },
     )
-  }, [shown.length])
+  }, [cardEntries.length])
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-[1088px] flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6">
+    <div
+      className={
+        embedded
+          ? 'flex min-h-0 w-full max-w-full flex-col gap-2 p-2'
+          : 'mx-auto flex h-full w-full max-w-[1088px] flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6'
+      }
+    >
+      {!embedded && (
+        <>
       <div className="flex flex-wrap items-end gap-2">
         <div>
           <h2 className="text-[23.8px] leading-tight font-semibold">{copy.title}</h2>
@@ -315,12 +336,18 @@ export default function Library() {
           )}
         </div>
       )}
+        </>
+      )}
 
-      <div ref={gridRef} className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {shown.map((entry) => (
+      <div
+        ref={gridRef}
+        className={embedded ? 'flex w-full flex-wrap gap-2' : 'grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'}
+      >
+        {cardEntries.map((entry) => (
           <ProjectCard
             key={entry.project.id}
             entry={entry}
+            embedded={embedded}
             busy={busy}
             onOpen={() => void openProject(entry.project.id)}
             onDuplicate={() => void duplicate(entry.project)}
@@ -341,7 +368,7 @@ export default function Library() {
         ))}
       </div>
 
-      <NewProjectDialog open={newOpen} onClose={() => setNewOpen(false)} />
+      {!embedded && <NewProjectDialog open={newOpen} onClose={() => setNewOpen(false)} />}
       <ProjectDetails project={details} onClose={() => setDetails(null)} />
     </div>
   )
@@ -349,6 +376,7 @@ export default function Library() {
 
 function ProjectCard({
   entry,
+  embedded,
   busy,
   onOpen,
   onDuplicate,
@@ -360,6 +388,7 @@ function ProjectCard({
   onDetails,
 }: {
   entry: LibraryEntry
+  embedded: boolean
   busy: boolean
   onOpen: () => void
   onDuplicate: () => void
@@ -379,12 +408,21 @@ function ProjectCard({
 
   useEffect(() => {
     // 缩略图也是整幅扫描：先让卡片画出来，空闲时再逐张补图
-    return onIdle(() => setThumb(renderThumbnailDataUrl(project.grid, getPalette(project.paletteId))))
+    return onIdle(() =>
+      setThumb(
+        renderThumbnailDataUrl(
+          project.grid,
+          getPalette(project.paletteId),
+          160,
+          deriveLayoutGeometry(project.layout).boards,
+        ),
+      ),
+    )
   }, [project])
 
   return (
     <article
-      className={`flex flex-col rounded-xl border bg-surface ${
+      className={`${embedded ? 'w-[min(82vw,300px)]' : ''} flex flex-col rounded-xl border bg-surface ${
         deleted ? 'border-dashed border-line' : 'border-line'
       }`}
     >
@@ -425,7 +463,14 @@ function ProjectCard({
       </button>
       <div className="flex items-center gap-1 border-t border-line px-2 py-1.5">
         <span className="ml-auto" />
-        <Menu label={<DotsThreeVertical size={15} aria-hidden />} title={copy.more} align="right" width="w-48" triggerVariant="ghost">
+        <Menu
+          label={<DotsThreeVertical size={15} aria-hidden />}
+          title={copy.more}
+          align="right"
+          width="w-48"
+          triggerVariant="ghost"
+          placement="top"
+        >
           {(close) => (
             <>
               {deleted ? (

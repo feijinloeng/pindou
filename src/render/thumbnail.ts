@@ -1,7 +1,9 @@
+import type { BoardGeometry } from '../domain/board'
 import type { CellGrid } from '../domain/grid'
 import { EMPTY, isPlaceable } from '../domain/grid'
 import type { Palette } from '../domain/palette'
 import { BOARD_BG } from './colors'
+import { drawBoardGuides } from './previewImage'
 
 /**
  * 作品库的缩略图：直接从 grid 生成，不需要重算图案（第 14.2 节）。
@@ -11,6 +13,7 @@ export function renderThumbnailDataUrl(
   grid: CellGrid,
   palette: Palette,
   maxPx = 160,
+  boards?: BoardGeometry['boards'],
 ): string | null {
   if (typeof document === 'undefined') return null
   const scale = Math.min(maxPx / grid.cols, maxPx / grid.rows, 8)
@@ -40,5 +43,6 @@ export function renderThumbnailDataUrl(
       )
     }
   }
+  if (boards?.length) drawBoardGuides(ctx, boards, scale)
   return canvas.toDataURL('image/webp', 0.8)
 }

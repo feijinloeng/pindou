@@ -4,6 +4,8 @@ import { PushPin, X } from '@phosphor-icons/react'
 import ColorList from './ColorList'
 import ConvertPanel from './ConvertPanel'
 import TransformPanel from './TransformPanel'
+import BoardPicker from '../pages/BoardPicker'
+import Library from '../pages/Library'
 import { t } from '../i18n/zh'
 import { gsap, MOTION, reducedMotion, usePresence } from '../motion'
 import { useEditor, type PanelId } from '../editor/store'
@@ -12,6 +14,8 @@ import { useMediaQuery } from './media'
 import { Z } from './overlayState'
 
 const TITLES: Record<PanelId, string> = {
+  library: t('nav').library,
+  boards: t('picker').models,
   image: t('convert').title,
   color: t('editor').colors,
   transform: t('editor').transformTitle,
@@ -32,10 +36,11 @@ export default function PanelHost() {
   const [shown, setShown] = useState<PanelId | null>(panel)
   if (panel && panel !== shown) setShown(panel)
 
+  const imagePanel = shown === 'image'
   const { ref, shown: frameShown, exiting } = usePresence(open, {
-    from: { opacity: 0, x: -12 },
-    to: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: -8 },
+    from: imagePanel ? { opacity: 0 } : { opacity: 0, x: -12 },
+    to: imagePanel ? { opacity: 1 } : { opacity: 1, x: 0 },
+    exit: imagePanel ? { opacity: 0 } : { opacity: 0, x: -8 },
     enterDuration: MOTION.panelIn,
     exitDuration: MOTION.panelOut,
   })
@@ -51,16 +56,29 @@ export default function PanelHost() {
   if (!frameShown || !shown) return null
 
   const body = (
-    <div ref={contentRef} className="flex min-h-0 flex-1 flex-col">
-      {shown === 'color' ? <ColorList /> : shown === 'image' ? <ConvertPanel /> : <TransformPanel />}
+    <div
+      ref={contentRef}
+      className={imagePanel ? 'pointer-events-auto flex min-h-0 flex-1 items-center justify-center' : 'flex min-h-0 flex-1 flex-col'}
+    >
+      {shown === 'library' ? (
+        <Library embedded onClose={() => openPanel(null)} />
+      ) : shown === 'boards' ? (
+        <BoardPicker />
+      ) : shown === 'color' ? (
+        <ColorList />
+      ) : shown === 'image' ? (
+        <ConvertPanel />
+      ) : (
+        <TransformPanel />
+      )}
     </div>
   )
 
-  if (mobile) {
+  if (mobile && shown !== 'library' && !imagePanel) {
     // 移动 sheet 是模态：焦点圈内、背景惰性、Escape/背板关闭（Modal 都包了）
     return (
       <Modal open={open} onClose={() => openPanel(null)} title={TITLES[shown]} sheet>
-        <PanelHeader shown={shown} onClose={() => openPanel(null)} />
+        {shown === 'boards' ? <PanelClose onClose={() => openPanel(null)} /> : <PanelHeader shown={shown} onClose={() => openPanel(null)} />}
         {body}
       </Modal>
     )
@@ -71,13 +89,34 @@ export default function PanelHost() {
       ref={ref}
       aria-label={TITLES[shown]}
       style={{ zIndex: Z.panel }}
-      className={`absolute top-28 bottom-4 left-4 flex w-80 flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-lg max-lg:top-40 ${
-        exiting ? 'pointer-events-none' : ''
-      }`}
+      className={`absolute flex flex-col ${
+        imagePanel
+          ? 'inset-0 pointer-events-none'
+          : shown === 'library'
+            ? 'inset-x-0 top-24 mx-auto max-h-[calc(100vh-6rem)] w-[92vw] max-w-[92vw] overflow-y-auto max-lg:top-40'
+            : shown === 'boards'
+            ? 'top-4 bottom-4 left-4 w-96 overflow-hidden rounded-xl border border-line bg-surface shadow-lg'
+            : 'top-28 bottom-4 left-4 w-80 overflow-hidden rounded-xl border border-line bg-surface shadow-lg max-lg:top-40'
+      } ${exiting ? 'pointer-events-none' : ''}`}
     >
-      <PanelHeader shown={shown} onClose={() => openPanel(null)} />
+      {shown === 'library' || imagePanel ? null : shown === 'boards' ? <PanelClose onClose={() => openPanel(null)} /> : <PanelHeader shown={shown} onClose={() => openPanel(null)} />}
       {body}
     </aside>
+  )
+}
+
+function PanelClose({ onClose }: { onClose: () => void }) {
+  const copy = t('editor')
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      aria-label={copy.closePanel}
+      title={copy.closePanel}
+      className="absolute top-2 right-2 z-10 flex h-8 w-8 items-center justify-center rounded-lg bg-surface/90 text-ink-2 hover:bg-hover"
+    >
+      <X size={14} aria-hidden />
+    </button>
   )
 }
 

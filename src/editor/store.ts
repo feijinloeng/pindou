@@ -1,11 +1,13 @@
 import { create } from 'zustand'
 
 import {
-  BOARD_PRESETS,
   deriveLayoutGeometry,
-  placementsFromArray,
+  emptyBoardGeometry,
+  findBoardProfile,
   type BoardGeometry,
   type BoardLayout,
+  type BoardPlacement,
+  type BoardTypeId,
   WARN_CELLS,
 } from '../domain/board'
 import { EMPTY, type CellGrid, createGrid, inBounds } from '../domain/grid'
@@ -42,21 +44,20 @@ import { resolveStrategy, STRATEGIES } from '../conversion/strategies'
 import { decodeImageFile } from '../conversion/decode'
 import type { Rgb } from '../conversion/colorDistance'
 import type { SourceImage } from '../conversion/types'
+import { t } from '../i18n/zh'
 
-export type ToolId = 'select' | 'pencil' | 'eraser' | 'picker' | 'bucket' | 'rect'
+export type ToolId = 'select' | 'pencil' | 'eraser' | 'picker' | 'bucket' | 'rect' | 'pan'
 
 /** 画布旁边同一时间只开一个临时面板。transform 是纯展示面板（整图变换），不动 store 数据 */
-export type PanelId = 'color' | 'image' | 'transform'
+export type PanelId = 'boards' | 'color' | 'image' | 'transform' | 'library'
 /** 两个目的地：编辑 / 导出 */
 export type Stage = 'edit' | 'export'
 
 export interface EditorState {
   /** 作品名（导出文件名用它） */
   name: string
-  /** 板阵：自由摆放的板列表 */
+  /** 画布上的自由摆放板列表 */
   layout: BoardLayout
-  /** 选板页是不是开着（开着的时候别的控件都不让点） */
-  pickerOpen: boolean
   projectId: string
   customer: string | null
   createdAt: string
@@ -109,11 +110,11 @@ export interface EditorState {
     cropSkipped: boolean
   } | null
 
-  /** 应用自由拼出来的板阵。keepContent=false 时清空画布（换板阵通常要清） */
+  /** 立即应用自由摆放的板块；keepContent=false 时清空画布 */
   applyLayout(layout: BoardLayout, keepContent?: boolean): string | null
-  /** 打开选板页。取消时回 returnTo 指的地方，不静默丢掉排板 */
-  openPicker(returnTo?: 'library' | 'edit'): void
-  closePicker(): void
+  addBoard(board: BoardTypeId, col: number, row: number): string | null
+  moveBoard(index: number, col: number, row: number): string | null
+  removeBoard(index: number): string | null
   /** 把当前状态打包成工程对象 */
   toProject(): Project
   /** 立刻落盘：explicit=true 表示用户自己点的保存（会打开导出这条路） */
@@ -121,7 +122,7 @@ export interface EditorState {
   /** 打开一个工程（作品库点进来时用）。saved=false 表示这份内容还没经过一次正式保存 */
   loadProject(project: Project, saved?: boolean): void
   /** 新建一个空工程 */
-  newProject(name?: string, presetId?: string): void
+  newProject(name?: string): void
   /** 刷新后把上次的草稿捡回来 */
   restoreLast(): Promise<boolean>
   setTool(tool: ToolId): void
@@ -139,8 +140,6 @@ export interface EditorState {
   stage: Stage
   /** 保存那一刻的 commitVersion。等于当前值才允许直接去导出 */
   savedCommitVersion: number | null
-  /** 取消选板时回哪里 */
-  pickerReturn: 'library' | 'edit'
   openPanel(panel: PanelId | null): void
   setColorPinned(pinned: boolean): void
   openExport(): void
@@ -207,16 +206,43 @@ function invalidateConversion(): number {
   return conversionGeneration
 }
 
-function defaultBoard() {
-  // 进来先给个 1 块 52 的台面，但选板页是开着的 —— 用户自己拼完才算数
-  const preset = BOARD_PRESETS.find((p) => p.id === '52-1')!
+function emptyBoard() {
   return {
-    layout: { placements: placementsFromArray(preset.array), gapMm: 0 } as BoardLayout,
-    geom: deriveLayoutGeometry({ placements: placementsFromArray(preset.array), gapMm: 0 }),
+    layout: { placements: [], gapMm: 0 } as BoardLayout,
+    geom: emptyBoardGeometry(),
   }
 }
 
-const initial = defaultBoard()
+const initial = emptyBoard()
+
+type PlacementShift = { placements: BoardPlacement[]; col: number; row: number }
+
+function shiftPlacements(placements: BoardPlacement[]): PlacementShift {
+  let minCol = 0
+  let minRow = 0
+  for (const placement of placements) {
+    minCol = Math.min(minCol, placement.col)
+    minRow = Math.min(minRow, placement.row)
+  }
+  const col = -minCol
+  const row = -minRow
+  return {
+    col,
+    row,
+    placements: col || row
+      ? placements.map((placement) => ({ ...placement, col: placement.col + col, row: placement.row + row }))
+      : placements,
+  }
+}
+
+function preserveWorldPosition(
+  set: (partial: Partial<EditorState>) => void,
+  get: () => EditorState,
+  shift: PlacementShift,
+): void {
+  const vp = get().vp
+  set({ vp: { ...vp, panX: vp.panX - shift.col * vp.zoom, panY: vp.panY - shift.row * vp.zoom } })
+}
 
 function syncHistory() {
   return { canUndo: history.canUndo, canRedo: history.canRedo, undoBytes: history.memoryBytes() }
@@ -225,14 +251,12 @@ function syncHistory() {
 export const useEditor = create<EditorState>((set, get) => ({
   name: '未命名作品',
   layout: initial.layout,
-  pickerOpen: true,
   projectId: 'local-draft',
   customer: null,
   panel: null,
   colorPinned: false,
   stage: 'edit',
   savedCommitVersion: null,
-  pickerReturn: 'library',
   createdAt: new Date().toISOString(),
   savedAt: null,
   saving: false,
@@ -275,7 +299,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const state = get()
     const previous = state.grid
     const next = createGrid(geom.cols, geom.rows, EMPTY, geom.placeable)
-    // 默认保留重叠位置上的内容：换板阵不该毁掉已经拼好的部分
+    // 默认保留坐标不变的内容：换板阵不该毁掉已经拼好的部分
     if (keepContent) {
       const copyCols = Math.min(previous.cols, geom.cols)
       const copyRows = Math.min(previous.rows, geom.rows)
@@ -295,7 +319,6 @@ export const useEditor = create<EditorState>((set, get) => ({
     const cells = geom.cols * geom.rows
     set({
       layout: { placements: [...layout.placements], gapMm: layout.gapMm },
-      pickerOpen: false,
       geom,
       grid: next,
       version: state.version + 1,
@@ -306,10 +329,9 @@ export const useEditor = create<EditorState>((set, get) => ({
       converting: false,
       progress: null,
       stage: 'edit',
-      panel: null,
-      vp: fitViewport(geom.cols, geom.rows, 900, 700),
-      notice:
-        cells > WARN_CELLS
+      notice: !geom.boards.length
+        ? null
+        : cells > WARN_CELLS
           ? `画布 ${cells.toLocaleString()} 格，超过 150 万格，建议改用 5mm 豆`
           : `${geom.boards.length} 块板 · ${geom.cols}×${geom.rows} 格`,
       ...syncHistory(),
@@ -317,12 +339,55 @@ export const useEditor = create<EditorState>((set, get) => ({
     return null
   },
 
-  openPicker(returnTo = 'edit') {
-    set({ pickerOpen: true, pickerReturn: returnTo, stage: 'edit', panel: null })
+  addBoard(board, col, row) {
+    const profile = findBoardProfile(board)
+    if (!profile) return `不认识这个板型：${String(board)}`
+    const state = get()
+    if (state.layout.placements.length && state.geom.pitchMm !== profile.pitchMm) {
+      return '不同针距的板不能放在同一张豆格画布上'
+    }
+    const requested = {
+      board,
+      col: Math.round(Number.isFinite(col) ? col : 0),
+      row: Math.round(Number.isFinite(row) ? row : 0),
+    }
+    const normalized = shiftPlacements([...state.layout.placements, requested])
+    const failure = get().applyLayout({
+      placements: normalized.placements,
+      gapMm: state.layout.gapMm,
+    })
+    if (!failure && (normalized.col || normalized.row)) preserveWorldPosition(set, get, normalized)
+    return failure
   },
 
-  closePicker() {
-    set({ pickerOpen: false })
+  moveBoard(index, col, row) {
+    const state = get()
+    const target = state.layout.placements[index]
+    if (!target) return null
+    const next = {
+      ...target,
+      col: Math.round(Number.isFinite(col) ? col : target.col),
+      row: Math.round(Number.isFinite(row) ? row : target.row),
+    }
+    if (next.col === target.col && next.row === target.row) return null
+    const normalized = shiftPlacements(
+      state.layout.placements.map((placement, i) => (i === index ? next : placement)),
+    )
+    const failure = get().applyLayout({
+      placements: normalized.placements,
+      gapMm: state.layout.gapMm,
+    })
+    if (!failure && (normalized.col || normalized.row)) preserveWorldPosition(set, get, normalized)
+    return failure
+  },
+
+  removeBoard(index) {
+    const state = get()
+    if (index < 0 || index >= state.layout.placements.length) return null
+    return get().applyLayout({
+      placements: state.layout.placements.filter((_, i) => i !== index),
+      gapMm: state.layout.gapMm,
+    })
   },
 
   openPanel(panel) {
@@ -406,7 +471,11 @@ export const useEditor = create<EditorState>((set, get) => ({
   loadProject(project, saved = true) {
     // 网格遮罩、空档脏数据、尺寸不一致全交给同一个规范化函数，
     // 不在这里再写一遍（两边不一致就是 bug 温床）
-    const geom = deriveLayoutGeometry(project.layout)
+    const layout: BoardLayout = {
+      ...project.layout,
+      placements: [...project.layout.placements],
+    }
+    const geom = deriveLayoutGeometry(layout)
     const normalized = normalizeGridForLayout(project.grid, geom)
     const pid = getPalette(project.paletteId).id
     const commitVersion = get().commitVersion + 1
@@ -420,15 +489,14 @@ export const useEditor = create<EditorState>((set, get) => ({
       projectId: project.id,
       customer: project.customer,
       createdAt: project.createdAt,
-      layout: project.layout,
-      pickerOpen: false,
+      layout,
       geom,
       grid: normalized.grid,
       palette: getPalette(pid),
       paletteId: pid,
       allowedCodes: project.allowedCodes,
       colorIndex: defaultColorIndex(getPalette(pid)),
-      conversion: project.conversion ?? DEFAULT_SETTINGS,
+      conversion: DEFAULT_SETTINGS,
       clipboard: null,
       selection: [],
       pending: null,
@@ -473,13 +541,9 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
   },
 
-  newProject(name = '未命名作品', presetId = '52-1') {
-    const preset = BOARD_PRESETS.find((p) => p.id === presetId) ?? BOARD_PRESETS[0]
-    const layout: BoardLayout = {
-      placements: placementsFromArray(preset.array),
-      gapMm: preset.array.gapMm,
-    }
-    const geom = deriveLayoutGeometry(layout)
+  newProject(name = '未命名作品') {
+    const layout: BoardLayout = { placements: [], gapMm: 0 }
+    const geom = emptyBoardGeometry()
     history.clear()
     recording = null
     const project = createProject({
@@ -489,7 +553,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       grid: createGrid(geom.cols, geom.rows, EMPTY, geom.placeable),
     })
     get().loadProject(project, false)
-    set({ notice: '新建作品', pickerOpen: true, pickerReturn: 'library' })
+    set({ notice: '新建空白作品', panel: null })
   },
 
   setTool(tool) {
@@ -618,6 +682,8 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
     if (!inBounds(grid, col, row)) return
 
+    if (tool === 'pan') return
+
     if (tool === 'picker') {
       const picked = pickColor(grid, col, row)
       if (picked !== null) set({ colorIndex: picked })
@@ -656,6 +722,7 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   pointerMove(col, row) {
     const state = get()
+    if (state.tool === 'pan') return
     if (rectAnchor) {
       const rect = makeRect(rectAnchor.col, rectAnchor.row, col, row)
       const sel = state.selection.length > 1 ? [...state.selection.slice(0, -1), rect] : [rect]
@@ -817,12 +884,20 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   async importImage(file) {
+    const occupied = get().grid.cells.some((value) => value !== EMPTY)
+    if (occupied && !window.confirm(t('convert').replaceConfirm)) return
     const generation = invalidateConversion()
     set({ converting: false, progress: null })
     try {
       const image = await decodeImageFile(file)
       if (generation !== conversionGeneration) return
-      set({ sourceImage: image, sourceName: file.name, sourceCached: false })
+      set({
+        sourceImage: image,
+        sourceName: file.name,
+        sourceCached: false,
+        conversion: DEFAULT_SETTINGS,
+        panel: 'image',
+      })
       // 缓存一份小图，刷新后还能重新转换。缓存失败不影响导入本身
       const id = get().projectId
       void compressForCache(file)
@@ -830,8 +905,8 @@ export const useEditor = create<EditorState>((set, get) => ({
           putImage(id, { name: file.name, blob: cached.blob, width: cached.width, height: cached.height }),
         )
         .catch(() => undefined)
-      // 导入完成就开图片面板：参数、应用都在那里，不在画布上摆一排设置
-      set({ panel: 'image' })
+      // Convert immediately with the fixed defaults; no parameter form is required.
+      void get().runConvert()
     } catch (error) {
       if (generation !== conversionGeneration) return
       set({ notice: error instanceof Error ? error.message : '图片读不进来' })

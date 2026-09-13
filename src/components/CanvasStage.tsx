@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { usedCells } from '../domain/grid'
-import { t } from '../i18n/zh'
+import { BOARD_PROFILES, type BoardTypeId } from '../domain/board'
+import { EMPTY } from '../domain/grid'
 import { useEditor } from '../editor/store'
 import { shouldHandleCanvasKey } from '../editor/keyboard'
 import {
@@ -9,7 +9,6 @@ import {
   clampViewport,
   panBy,
   screenToCell,
-  zoomAt,
   zoomFromWheel,
   type Viewport,
 } from '../render/canvasViewport'
@@ -26,9 +25,12 @@ export default function CanvasStage() {
   const [cursor, setCursor] = useState<{ col: number; row: number } | null>(null)
   /** 键盘光标：方向键移动，Enter 应用当前工具 */
   const [kbCell, setKbCell] = useState<{ col: number; row: number } | null>(null)
+  const [panning, setPanning] = useState(false)
   const panRef = useRef<{ x: number; y: number } | null>(null)
+  const boardDragRef = useRef<{ index: number; colOffset: number; rowOffset: number } | null>(null)
   const spaceRef = useRef(false)
 
+  const projectId = useEditor((s) => s.projectId)
   const grid = useEditor((s) => s.grid)
   const palette = useEditor((s) => s.palette)
   const geom = useEditor((s) => s.geom)
@@ -36,30 +38,13 @@ export default function CanvasStage() {
   const commitVersion = useEditor((s) => s.commitVersion)
   const version = useEditor((s) => s.version)
   const showCodes = useEditor((s) => s.showCodes)
+  const tool = useEditor((s) => s.tool)
   const selection = useEditor((s) => s.selection)
+  const panel = useEditor((s) => s.panel)
+  const stage = useEditor((s) => s.stage)
   const setVp = useEditor((s) => s.setVp)
   const fitTo = useEditor((s) => s.fitTo)
-  const openPanel = useEditor((s) => s.openPanel)
-  const copy = t('editor')
-  /** 空画布上的两个入口：导入图片 / 直接画。动过画笔就不再出现 */
-  const [promptDismissed, setPromptDismissed] = useState(false)
-  const empty = useMemo(
-    () => usedCells(grid) === 0,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [grid, commitVersion],
-  )
-
-  /** 以画布中心为锚缩放：点 +/− 时不想把编辑目标甩出去 */
-  const stepZoom = (factor: number) =>
-    setVp(
-      clampViewport(
-        zoomAt(vp, vp.zoom * factor, size.width / 2, size.height / 2),
-        grid.cols,
-        grid.rows,
-        size.width,
-        size.height,
-      ),
-    )
+  const addBoard = useEditor((s) => s.addBoard)
 
   const [dpr, setDpr] = useState(() =>
     typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2),
@@ -82,21 +67,25 @@ export default function CanvasStage() {
     return () => ro.disconnect()
   }, [])
 
-  // 换板阵（或第一次拿到尺寸）时自动铺满；之后由用户自己的缩放说了算。
-  // key 必须包含板阵结构，不能只看外接框尺寸 —— L 形改成同一尺寸的矩形时
-  // cols×rows 没变，但台面已经不同了。
+  // 只在新工程、第一次放板或重新变空时自动居中；后续拖入板块不重置用户视口。
   const layoutKey = useMemo(
     () => geom.boards.map((b) => `${b.c0},${b.r0},${b.cw},${b.rh}`).join('|'),
     [geom],
   )
   const fittedRef = useRef('')
+  const previousProjectIdRef = useRef('')
+  const previousBoardCountRef = useRef<number | null>(null)
   useEffect(() => {
     if (!size.width || !size.height) return
-    const key = `${geom.cols}x${geom.rows}#${layoutKey}`
+    const key = `${projectId}:${geom.cols}x${geom.rows}#${layoutKey}`
     if (fittedRef.current === key) return
+    const shouldFit =
+      fittedRef.current === '' || previousProjectIdRef.current !== projectId || previousBoardCountRef.current === 0
     fittedRef.current = key
-    fitTo(size.width, size.height, dpr)
-  }, [geom, layoutKey, size, dpr, fitTo])
+    previousProjectIdRef.current = projectId
+    previousBoardCountRef.current = geom.boards.length
+    if (shouldFit) fitTo(size.width, size.height, dpr)
+  }, [projectId, geom, layoutKey, size, dpr, fitTo])
 
   useEffect(() => {
     for (const c of [commitRef.current, overlayRef.current]) {
@@ -150,6 +139,9 @@ export default function CanvasStage() {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, c.width, c.height)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    const hasContent =
+      s.geom.boards.length > 0 || Boolean(s.pending?.size) || s.grid.cells.some((value) => value !== EMPTY)
+    if (!hasContent) return
     if (s.pending?.size) {
       for (const [i, v] of s.pending) {
         const col = i % s.grid.cols
@@ -157,9 +149,11 @@ export default function CanvasStage() {
         fillCellRect(ctx, s.vp, col, row, s.palette.colors[v]?.hex ?? BOARD_BG)
       }
     }
-    if (cursor) drawCursorBox(ctx, s.vp, cursor.col, cursor.row)
-    if (kbCell) drawCursorBox(ctx, s.vp, kbCell.col, kbCell.row)
-  }, [cursor, kbCell, dpr])
+    if (tool !== 'pan') {
+      const activeCursor = cursor ?? kbCell
+      if (activeCursor) drawCursorBox(ctx, s.vp, activeCursor.col, activeCursor.row)
+    }
+  }, [cursor, kbCell, dpr, tool])
 
   useEffect(() => {
     drawOverlay()
@@ -287,13 +281,54 @@ export default function CanvasStage() {
   const kbValue = kbIndex >= 0 ? grid.cells[kbIndex] : null
   const kbCode =
     kbValue === null || kbValue === 0xffff ? null : (palette.colors[kbValue]?.code ?? null)
+  const boardAtCell = (cell: { col: number; row: number }) => {
+    for (let i = geom.boards.length - 1; i >= 0; i--) {
+      const board = geom.boards[i]
+      if (
+        cell.col >= board.c0 &&
+        cell.col < board.c0 + board.cw &&
+        cell.row >= board.r0 &&
+        cell.row < board.r0 + board.rh
+      ) {
+        return board.index
+      }
+    }
+    return -1
+  }
 
   return (
-    <div ref={wrapRef} className="relative h-full w-full touch-none overflow-hidden overscroll-none">
-      <canvas ref={commitRef} className="absolute left-0 top-0" />
+    <div
+      ref={wrapRef}
+      className="relative h-full w-full touch-none overflow-hidden overscroll-none"
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('text/pindou-board')) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+      }}
+      onDrop={(e) => {
+        const board = e.dataTransfer.getData('text/pindou-board') as BoardTypeId
+        if (!board || !BOARD_PROFILES[board]) return
+        e.preventDefault()
+        const { x, y } = localPoint(e)
+        const center = screenToCell(vp, x, y)
+        const size = BOARD_PROFILES[board].pegs
+        const failure = addBoard(
+          board,
+          center.col - Math.floor(size / 2),
+          center.row - Math.floor(size / 2),
+        )
+        if (failure) useEditor.getState().setNotice(failure, 'error')
+      }}
+    >
+      <canvas
+        ref={commitRef}
+        className={`absolute left-0 top-0 ${panel === 'library' ? 'invisible' : ''}`}
+      />
       <canvas
         ref={overlayRef}
-        className="absolute left-0 top-0 touch-none"
+        className={`absolute left-0 top-0 touch-none ${
+          tool === 'pan' ? (panning ? 'cursor-grabbing' : 'cursor-grab') : panel === 'boards' ? 'cursor-move' : ''
+        } ${panel === 'library' ? 'invisible' : ''}`}
         tabIndex={0}
         role="application"
         aria-label="豆格画布：方向键移动光标，Enter 应用当前工具"
@@ -320,20 +355,44 @@ export default function CanvasStage() {
         }}
         onContextMenu={(e) => e.preventDefault()}
         onPointerDown={(e) => {
-          setPromptDismissed(true)
           const { x, y } = localPoint(e)
           const cell = screenToCell(vp, x, y)
           e.currentTarget.setPointerCapture(e.pointerId)
-          if (e.button === 1 || spaceRef.current) {
+          if (e.button === 1 || spaceRef.current || (tool === 'pan' && e.button === 0)) {
             panRef.current = { x: e.clientX, y: e.clientY }
+            setPanning(true)
             return
           }
-          useEditor.getState().pointerDown(cell.col, cell.row, e.button, e.shiftKey)
+          const state = useEditor.getState()
+          if (e.button === 0 && state.panel === 'boards') {
+            const index = boardAtCell(cell)
+            const placement = index >= 0 ? state.layout.placements[index] : null
+            if (placement) {
+              boardDragRef.current = {
+                index,
+                colOffset: cell.col - placement.col,
+                rowOffset: cell.row - placement.row,
+              }
+              return
+            }
+          }
+          state.pointerDown(cell.col, cell.row, e.button, e.shiftKey)
         }}
         onPointerMove={(e) => {
           const { x, y } = localPoint(e)
           const cell = screenToCell(vp, x, y)
-          setCursor(cell)
+          setCursor(tool === 'pan' ? null : cell)
+          if (boardDragRef.current) {
+            const state = useEditor.getState()
+            const current = screenToCell(state.vp, x, y)
+            const failure = state.moveBoard(
+              boardDragRef.current.index,
+              current.col - boardDragRef.current.colOffset,
+              current.row - boardDragRef.current.rowOffset,
+            )
+            if (failure) state.setNotice(failure, 'error')
+            return
+          }
           if (panRef.current) {
             const dx = e.clientX - panRef.current.x
             const dy = e.clientY - panRef.current.y
@@ -345,46 +404,28 @@ export default function CanvasStage() {
         }}
         onPointerUp={() => {
           panRef.current = null
+          setPanning(false)
+          boardDragRef.current = null
           useEditor.getState().pointerUp()
         }}
         onPointerLeave={() => {
           panRef.current = null
+          setPanning(false)
+          boardDragRef.current = null
           setCursor(null)
           useEditor.getState().pointerUp()
         }}
+        onPointerCancel={() => {
+          panRef.current = null
+          setPanning(false)
+          boardDragRef.current = null
+          useEditor.getState().pointerUp()
+        }}
       />
-      <ToolDock
-        onZoom={stepZoom}
-        onFit={() => fitTo(size.width, size.height, dpr)}
-      />
-      <div className="pointer-events-none absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
-        {empty && !promptDismissed && (
-          <div className="pointer-events-auto flex w-60 flex-col gap-2 rounded-xl border border-line bg-surface p-4 text-center shadow-lg">
-            <p className="text-sm font-medium text-ink">{copy.emptyTitle}</p>
-            <button
-              type="button"
-              onClick={() => {
-                setPromptDismissed(true)
-                openPanel('image')
-              }}
-              className="rounded-lg border border-accent bg-accent px-3 py-1.5 text-sm text-on-accent"
-            >
-              {copy.emptyImport}
-            </button>
-            <button
-              type="button"
-              onClick={() => setPromptDismissed(true)}
-              className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink hover:bg-hover"
-            >
-              {copy.emptyDraw}
-            </button>
-            <p className="text-xs text-ink-2">{copy.emptyHint}</p>
-          </div>
-        )}
-      </div>
+      {stage !== 'export' && <ToolDock />}
       <p id="canvas-help" className="sr-only">
         方向键移动光标，按住 Shift 加方向键一次跳 5 格，Enter 把当前工具用在光标那一格上。
-        Cmd 或 Ctrl 加 Z 撤销，V/B/E/I/G/M 切换工具。
+        Cmd 或 Ctrl 加 Z 撤销，V/B/E/I/G/M/H 切换工具。打开画板面板后可拖动板块微调位置。
       </p>
       <div className="sr-only" role="status" aria-live="polite">
         {kbCell

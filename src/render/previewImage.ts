@@ -1,3 +1,4 @@
+import { boardGuide, type BoardGeometry } from '../domain/board'
 import { EMPTY, isPlaceable, type CellGrid } from '../domain/grid'
 import { type Palette, shadeHex } from '../domain/palette'
 
@@ -18,6 +19,7 @@ export interface PreviewOptions {
   /** 每格多少像素 */
   pxPerCell: number
   showCoords?: boolean
+  boards?: BoardGeometry['boards']
 }
 
 export interface PreviewPlan {
@@ -82,6 +84,8 @@ export function drawPreview(ctx: CanvasRenderingContext2D, options: PreviewOptio
     }
   }
 
+  if (options.boards?.length) drawBoardGuides(ctx, options.boards, z)
+
   if (options.showCoords) {
     ctx.fillStyle = '#666666'
     ctx.font = `${Math.max(8, z * 0.8)}px ui-monospace, Menlo, monospace`
@@ -90,4 +94,57 @@ export function drawPreview(ctx: CanvasRenderingContext2D, options: PreviewOptio
   }
 
   return plan
+}
+
+/** Same board marks as the editor: solid 10-bead boundaries plus dashed 5-bead crosses. */
+export function drawBoardGuides(
+  ctx: CanvasRenderingContext2D,
+  boards: BoardGeometry['boards'],
+  cellSize: number,
+): void {
+  const x = (cell: number) => cell * cellSize
+  const y = (cell: number) => cell * cellSize
+  const solidWidth = Math.max(0.75, cellSize * 0.08)
+  const dashWidth = Math.max(0.55, cellSize * 0.06)
+
+  ctx.save()
+  ctx.strokeStyle = '#111111'
+  ctx.lineCap = 'butt'
+  ctx.lineWidth = solidWidth
+  ctx.setLineDash([])
+  ctx.beginPath()
+  for (const board of boards) {
+    const guide = boardGuide(board)
+    if (guide) {
+      for (const col of guide.solidCols) {
+        ctx.moveTo(x(col), y(guide.top))
+        ctx.lineTo(x(col), y(guide.bottom))
+      }
+      for (const row of guide.solidRows) {
+        ctx.moveTo(x(guide.left), y(row))
+        ctx.lineTo(x(guide.right), y(row))
+      }
+    } else {
+      ctx.rect(x(board.c0), y(board.r0), board.cw * cellSize, board.rh * cellSize)
+    }
+  }
+  ctx.stroke()
+
+  ctx.lineWidth = dashWidth
+  ctx.setLineDash([Math.max(2, cellSize * 0.5), Math.max(1.5, cellSize * 0.35)])
+  ctx.beginPath()
+  for (const board of boards) {
+    const guide = boardGuide(board)
+    if (!guide) continue
+    for (const col of guide.dashedCols) {
+      ctx.moveTo(x(col), y(guide.top))
+      ctx.lineTo(x(col), y(guide.bottom))
+    }
+    for (const row of guide.dashedRows) {
+      ctx.moveTo(x(guide.left), y(row))
+      ctx.lineTo(x(guide.right), y(row))
+    }
+  }
+  ctx.stroke()
+  ctx.restore()
 }

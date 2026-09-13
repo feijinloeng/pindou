@@ -1,11 +1,20 @@
+import { boardGuide, type BoardGeometry } from '../domain/board'
 import { EMPTY, type CellGrid } from '../domain/grid'
 import { type Palette, labelTextColor } from '../domain/palette'
 import { CODE_ZOOM, GRID_ZOOM, type Viewport, visibleRange } from './canvasViewport'
 import { BITMAP_THRESHOLD, type GridBitmap } from './gridBitmap'
 import type { Selection } from '../editor/selection'
 
-export { BOARD_BG, CURSOR_COLOR, HOLE_BG, SEAM_COLOR, SELECTION_COLOR, STAGE_BG } from './colors'
-import { BOARD_BG, CURSOR_COLOR, HOLE_BG, SEAM_COLOR, SELECTION_COLOR, STAGE_BG } from './colors'
+export {
+  BOARD_BG,
+  BOARD_GUIDE_COLOR,
+  CURSOR_COLOR,
+  HOLE_BG,
+  SEAM_COLOR,
+  SELECTION_COLOR,
+  STAGE_BG,
+} from './colors'
+import { BOARD_BG, BOARD_GUIDE_COLOR, CURSOR_COLOR, SELECTION_COLOR, STAGE_BG } from './colors'
 
 export interface DrawPatternOptions {
   grid: CellGrid
@@ -20,8 +29,8 @@ export interface DrawPatternOptions {
   selection?: Selection
   /** 进行中的笔画：index → 色板索引，覆盖 grid 里的值 */
   pending?: Map<number, number> | null
-  /** 每块板在豆格坐标里的矩形。自由拼板时板缝不是整条贯穿的线，只能按块画 */
-  boards?: Array<{ c0: number; r0: number; cw: number; rh: number }>
+  /** 每块板在豆格坐标里的矩形；导线按板型自己的安全区计算 */
+  boards?: BoardGeometry['boards']
   /** 板没盖到的格子（自由拼板的外接框空档），画成"没有板"的样子 */
   placeable?: Uint8Array | null
   bitmap?: GridBitmap | null
@@ -40,8 +49,10 @@ export function drawPattern(ctx: CanvasRenderingContext2D, o: DrawPatternOptions
   ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0)
   ctx.fillStyle = STAGE_BG
   ctx.fillRect(0, 0, width, height)
-  ctx.fillStyle = BOARD_BG
-  ctx.fillRect(vp.panX, vp.panY, grid.cols * z, grid.rows * z)
+  if (o.boards?.length) {
+    ctx.fillStyle = BOARD_BG
+    ctx.fillRect(vp.panX, vp.panY, grid.cols * z, grid.rows * z)
+  }
 
   const { c0, c1, r0, r1 } = visibleRange(vp, grid.cols, grid.rows, width, height)
   const pending = o.pending ?? null
@@ -58,7 +69,8 @@ export function drawPattern(ctx: CanvasRenderingContext2D, o: DrawPatternOptions
     drawCells(ctx, o, c0, c1, r0, r1, pending)
   }
 
-  if (z >= GRID_ZOOM) drawLines(ctx, o, c0, c1, r0, r1)
+  if (z >= GRID_ZOOM && o.boards?.length) drawLines(ctx, o, c0, c1, r0, r1)
+  if (o.boards?.length) drawBoardGuides(ctx, o)
   if (z >= CODE_ZOOM && o.showCodes) drawCodes(ctx, o, c0, c1, r0, r1, pending)
   if (o.placeable) drawHoles(ctx, o, c0, c1, r0, r1)
   if (o.boards?.length) drawBoardFrames(ctx, o)
@@ -158,18 +170,100 @@ function drawLines(
 ): void {
   const { vp, grid } = o
   const z = vp.zoom
+  const regions = o.boards?.length
+    ? o.boards.map((board) => ({
+        left: board.c0,
+        top: board.r0,
+        right: board.c0 + board.cw,
+        bottom: board.r0 + board.rh,
+      }))
+    : [{ left: 0, top: 0, right: grid.cols, bottom: grid.rows }]
+
   ctx.strokeStyle = 'rgba(0,0,0,0.10)'
   ctx.lineWidth = 1 / vp.dpr
   ctx.beginPath()
-  for (let c = Math.max(0, c0); c <= Math.min(grid.cols, c1); c++) {
-    const x = Math.round(vp.panX + c * z) + 0.5
-    ctx.moveTo(x, Math.max(vp.panY, 0))
-    ctx.lineTo(x, Math.min(vp.panY + grid.rows * z, o.height))
+  for (const region of regions) {
+    const left = Math.max(c0, region.left)
+    const right = Math.min(c1, region.right)
+    const top = Math.max(r0, region.top)
+    const bottom = Math.min(r1, region.bottom)
+    if (left > right || top > bottom) continue
+    for (let c = left; c <= right; c++) {
+      const x = Math.round(vp.panX + c * z) + 0.5
+      ctx.moveTo(x, Math.round(vp.panY + top * z) + 0.5)
+      ctx.lineTo(x, Math.round(vp.panY + bottom * z) + 0.5)
+    }
+    for (let r = top; r <= bottom; r++) {
+      const y = Math.round(vp.panY + r * z) + 0.5
+      ctx.moveTo(Math.round(vp.panX + left * z) + 0.5, y)
+      ctx.lineTo(Math.round(vp.panX + right * z) + 0.5, y)
+    }
   }
-  for (let r = Math.max(0, r0); r <= Math.min(grid.rows, r1); r++) {
-    const y = Math.round(vp.panY + r * z) + 0.5
-    ctx.moveTo(Math.max(vp.panX, 0), y)
-    ctx.lineTo(Math.min(vp.panX + grid.cols * z, o.width), y)
+  ctx.stroke()
+}
+
+/** Draw the real board marks: solid 10-bead boundaries and dashed 5-bead crosses. */
+function drawBoardGuides(ctx: CanvasRenderingContext2D, o: DrawPatternOptions): void {
+  const boards = o.boards
+  if (!boards?.length) return
+  const { vp } = o
+  const z = vp.zoom
+  const x = (cell: number) => Math.round(vp.panX + cell * z) + 0.5
+  const y = (cell: number) => Math.round(vp.panY + cell * z) + 0.5
+
+  ctx.save()
+  ctx.strokeStyle = BOARD_GUIDE_COLOR
+  ctx.lineCap = 'butt'
+  ctx.lineWidth = 1.4 / vp.dpr
+  ctx.setLineDash([])
+  ctx.beginPath()
+  for (const board of boards) {
+    const guide = boardGuide(board)
+    if (!guide) continue
+    for (const col of guide.solidCols) {
+      ctx.moveTo(x(col), y(guide.top))
+      ctx.lineTo(x(col), y(guide.bottom))
+    }
+    for (const row of guide.solidRows) {
+      ctx.moveTo(x(guide.left), y(row))
+      ctx.lineTo(x(guide.right), y(row))
+    }
+  }
+  ctx.stroke()
+
+  ctx.lineWidth = 1 / vp.dpr
+  ctx.setLineDash([4, 3])
+  ctx.beginPath()
+  for (const board of boards) {
+    const guide = boardGuide(board)
+    if (!guide) continue
+    for (const col of guide.dashedCols) {
+      ctx.moveTo(x(col), y(guide.top))
+      ctx.lineTo(x(col), y(guide.bottom))
+    }
+    for (const row of guide.dashedRows) {
+      ctx.moveTo(x(guide.left), y(row))
+      ctx.lineTo(x(guide.right), y(row))
+    }
+  }
+  ctx.stroke()
+  ctx.restore()
+}
+
+/** Unmarked midi boards keep a quiet silhouette; mini boards use their printed guides above. */
+function drawBoardFrames(ctx: CanvasRenderingContext2D, o: DrawPatternOptions): void {
+  const boards = (o.boards ?? []).filter((board) => !boardGuide(board))
+  if (!boards.length) return
+  const { vp } = o
+  const z = vp.zoom
+  ctx.strokeStyle = o.seamColor ?? BOARD_GUIDE_COLOR
+  ctx.lineWidth = 1.5 / vp.dpr
+  ctx.setLineDash([])
+  ctx.beginPath()
+  for (const b of boards) {
+    const x = Math.round(vp.panX + b.c0 * z) + 0.5
+    const y = Math.round(vp.panY + b.r0 * z) + 0.5
+    ctx.rect(x, y, Math.round(b.cw * z), Math.round(b.rh * z))
   }
   ctx.stroke()
 }
@@ -207,23 +301,7 @@ function drawCodes(
   }
 }
 
-/** 每块板画一圈边框：板可以错开摆，所以不能只画贯穿线 */
-function drawBoardFrames(ctx: CanvasRenderingContext2D, o: DrawPatternOptions): void {
-  const { vp } = o
-  const z = vp.zoom
-  ctx.strokeStyle = o.seamColor ?? SEAM_COLOR
-  ctx.lineWidth = 1.5
-  ctx.setLineDash([])
-  ctx.beginPath()
-  for (const b of o.boards ?? []) {
-    const x = Math.round(vp.panX + b.c0 * z) + 0.5
-    const y = Math.round(vp.panY + b.r0 * z) + 0.5
-    ctx.rect(x, y, Math.round(b.cw * z), Math.round(b.rh * z))
-  }
-  ctx.stroke()
-}
-
-/** 空档：外接矩形里没有板的格子，画暗并打叉，明确"这儿不能放豆子" */
+/** 空档：外接矩形里没有板的格子保持工作台空白，不画格线也不显示颜色 */
 function drawHoles(
   ctx: CanvasRenderingContext2D,
   o: DrawPatternOptions,
@@ -236,7 +314,7 @@ function drawHoles(
   if (!mask) return
   const { vp, grid } = o
   const z = vp.zoom
-  ctx.fillStyle = HOLE_BG
+  ctx.fillStyle = STAGE_BG
   for (let r = r0; r < r1; r++) {
     for (let c = c0; c < c1; c++) {
       if (mask[r * grid.cols + c]) continue

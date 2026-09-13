@@ -8,7 +8,7 @@ import { Btn, Field, INPUT_CLS, Modal } from './ui'
 
 /**
  * 新建作品的唯一入口（作品库的主操作和应用菜单都走这里）：
- * 名字可空（回退「未命名作品」）→ 先把上一个工程冲掉 → 建工程 → 进选板。
+ * 名字可空（回退「未命名作品」）→ 先把上一个工程冲掉 → 建一个空白工程。
  */
 export default function NewProjectDialog({
   open,

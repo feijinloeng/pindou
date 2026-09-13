@@ -81,8 +81,8 @@ function escapeText(str: string): string {
 
 class JsPdfSink implements PdfSink {
   private doc: jsPDF
-  readonly pageWidth: number
-  readonly pageHeight: number
+  pageWidth: number
+  pageHeight: number
 
   constructor(options: JsPdfOptions) {
     this.pageWidth = options.widthPt
@@ -171,7 +171,7 @@ class JsPdfSink implements PdfSink {
     this.raw('BT')
     this.raw(`${fontId} ${fmt(Math.round(sizePt * 100) / 100)} Tf`)
     this.raw(`${pdfRgb(fill)} rg`)
-    if (mode === 'fillstroke') this.raw('2 Tr')
+    this.raw(mode === 'fillstroke' ? '2 Tr' : '0 Tr')
     for (const item of items) {
       // 绝对定位：用 Tm，不用 Td（Td 相对上一次行矩阵，会累积）
       this.raw(`1 0 0 1 ${fmt(item.x)} ${fmt(item.baselineY)} Tm (${escapeText(item.text)}) Tj`)
@@ -192,6 +192,8 @@ class JsPdfSink implements PdfSink {
   }
 
   addPage(widthPt: number, heightPt: number): void {
+    this.pageWidth = widthPt
+    this.pageHeight = heightPt
     this.doc.addPage([widthPt, heightPt], widthPt > heightPt ? 'landscape' : 'portrait')
   }
 

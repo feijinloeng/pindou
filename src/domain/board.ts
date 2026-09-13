@@ -63,9 +63,8 @@ export const MAX_CELLS = 5_000_000
 export const WARN_CELLS = 1_500_000
 
 /**
- * 板阵 = 一个二维板矩阵，不是自由列表。
- * 行与行、列与列的总钉数必须一致，才能保证针区是干净的矩形、板缝是笔直的。
- * 矩阵里不允许 null —— v1 不支持 L 形等不规则板阵。
+ * BoardArray 是旧版预设格式；运行中的布局使用下面的自由摆放列表。
+ * 旧矩阵仍保留用于读取已有工程和预设，不限制新画布的形状。
  */
 export interface BoardArray {
   /** rows[r][c] = 板型 id */
@@ -82,6 +81,54 @@ export interface BoardRect {
   r0: number
   cw: number
   rh: number
+}
+
+/**
+ * Real mini boards mark 10×10 bead units, not the whole pegboard edge.
+ * The unmarked peg rows on both sides are part of the physical safety zone.
+ */
+export interface BoardGuide {
+  left: number
+  top: number
+  right: number
+  bottom: number
+  solidCols: number[]
+  solidRows: number[]
+  dashedCols: number[]
+  dashedRows: number[]
+}
+
+const GUIDE_UNITS: Partial<Record<BoardTypeId, number>> = {
+  mini26: 2,
+  mini52: 5,
+  mini78: 7,
+  mini104: 10,
+}
+
+/** Return the printed guide geometry for a board, or null for unmarked midi boards. */
+export function boardGuide(board: Pick<BoardRect, 'board' | 'c0' | 'r0'>): BoardGuide | null {
+  const profile = findBoardProfile(board.board)
+  const units = profile ? GUIDE_UNITS[profile.id] : undefined
+  if (!profile || !units) return null
+
+  const workingCells = units * 10
+  const margin = (profile.pegs - workingCells) / 2
+  if (!Number.isInteger(margin) || margin < 0) return null
+
+  const left = board.c0 + margin
+  const top = board.r0 + margin
+  const right = left + workingCells
+  const bottom = top + workingCells
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    solidCols: Array.from({ length: units + 1 }, (_, i) => left + i * 10),
+    solidRows: Array.from({ length: units + 1 }, (_, i) => top + i * 10),
+    dashedCols: Array.from({ length: units }, (_, i) => left + i * 10 + 5),
+    dashedRows: Array.from({ length: units }, (_, i) => top + i * 10 + 5),
+  }
 }
 
 export interface BoardGeometry {
@@ -174,15 +221,17 @@ export function describeLayoutError(err: BoardLayoutError): string {
 }
 
 /**
- * 摆放列表的结构校验：不空 / 板型认识 / 坐标是整数 / 同针距 / 尺寸在范围内。
+ * 摆放列表的结构校验：空列表或合法板型 / 坐标是整数 / 同针距 / 不重叠 / 尺寸在范围内。
  * 只扫板数，不扫格子，所以放在推导几何前面当下水道足够便宜。
  */
 export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
   const placements = layout?.placements
-  if (!Array.isArray(placements) || placements.length === 0) return { kind: 'empty' }
+  if (!Array.isArray(placements)) return { kind: 'empty' }
+  if (placements.length === 0) return null
 
   let cols = 0
   let rows = 0
+  const sizes: number[] = []
   const pitches = new Set<number>()
   for (const placement of placements) {
     const profile = findBoardProfile(placement?.board)
@@ -194,8 +243,23 @@ export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
       return { kind: 'bad-placement', placement }
     }
     pitches.add(profile.pitchMm)
+    sizes.push(profile.pegs)
     cols = Math.max(cols, placement.col + profile.pegs)
     rows = Math.max(rows, placement.row + profile.pegs)
+  }
+  for (let i = 0; i < placements.length; i++) {
+    const first = placements[i]
+    for (let j = i + 1; j < placements.length; j++) {
+      const second = placements[j]
+      if (
+        first.col < second.col + sizes[j] &&
+        second.col < first.col + sizes[i] &&
+        first.row < second.row + sizes[j] &&
+        second.row < first.row + sizes[i]
+      ) {
+        return { kind: 'overlap', first, second }
+      }
+    }
   }
   if (pitches.size > 1) return { kind: 'mixed-pitch', pitches: [...pitches] }
 
@@ -203,14 +267,29 @@ export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
 }
 
 /**
- * 自由摆放的校验：结构合法 / 不重叠 / 不超上限。
- * 重叠检查顺便把 placeable 遮罩建出来，所以和推导几何合并成一次扫描。
+ * 自由摆放的校验：板型、坐标、针距、不能重叠和画布上限；相邻边可以直接拼接，也可以留出间距。
+ * placeable 遮罩在推导几何时按所有板块建立。
  */
+export function emptyBoardGeometry(): BoardGeometry {
+  return {
+    cols: 1,
+    rows: 1,
+    pitchMm: 2.6,
+    seamCols: [],
+    seamRows: [],
+    boards: [],
+    gapMm: 0,
+    placeable: new Uint8Array(1),
+  }
+}
+
 export function deriveLayoutGeometry(layout: BoardLayout): BoardGeometry {
   const invalid = validateLayout(layout)
   if (invalid) throw new Error(describeLayoutError(invalid))
 
   const placements = layout.placements
+  if (placements.length === 0) return emptyBoardGeometry()
+
   let cols = 0
   let rows = 0
   for (const p of placements) {
@@ -220,7 +299,7 @@ export function deriveLayoutGeometry(layout: BoardLayout): BoardGeometry {
   }
 
   const placeable = new Uint8Array(cols * rows)
-  /** 每格属于第几块板，用来查重叠和算板缝 */
+  /** 每格所属的板序号，用来计算可见板缝 */
   const owner = new Int32Array(cols * rows).fill(-1)
   const boards: BoardRect[] = []
   for (let i = 0; i < placements.length; i++) {

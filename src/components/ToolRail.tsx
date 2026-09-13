@@ -2,27 +2,29 @@ import {
   ArrowClockwise,
   ArrowCounterClockwise,
   ArrowsClockwise,
+  Books,
   CursorClick,
   Eraser,
   Eyedropper,
-  FrameCorners,
+  Hand,
   Image as ImageIcon,
   PaintBucket,
   Palette,
   Pencil,
   Selection,
+  Plus,
   SquaresFour,
 } from '@phosphor-icons/react'
 
+import { useRef, useState } from 'react'
+
+import { useEditor, type PanelId, type ToolId } from '../editor/store'
 import { labelTextColor } from '../domain/palette'
 import { t } from '../i18n/zh'
 import { gsap, MOTION, reducedMotion } from '../motion'
-import { useEditor, type PanelId, type ToolId } from '../editor/store'
+import NewProjectDialog from './NewProjectDialog'
 import { Z } from './overlayState'
 import { Tip } from './ui'
-import { useRef } from 'react'
-
-import { CODE_ZOOM } from '../render/canvasViewport'
 
 /**
  * Excalidraw 式顶部工具岛：功能入口、绘图工具、视图控制和历史操作。
@@ -31,42 +33,42 @@ import { CODE_ZOOM } from '../render/canvasViewport'
 const TOOLS: Array<{ id: ToolId; icon: React.ReactNode; key: string }> = [
   { id: 'select', icon: <CursorClick size={17} aria-hidden />, key: 'V' },
   { id: 'rect', icon: <Selection size={17} aria-hidden />, key: 'M' },
+  { id: 'pan', icon: <Hand size={17} aria-hidden />, key: 'H' },
   { id: 'pencil', icon: <Pencil size={17} aria-hidden />, key: 'B' },
   { id: 'eraser', icon: <Eraser size={17} aria-hidden />, key: 'E' },
   { id: 'bucket', icon: <PaintBucket size={17} aria-hidden />, key: 'G' },
   { id: 'picker', icon: <Eyedropper size={17} aria-hidden />, key: 'I' },
 ]
 
-export default function ToolDock({
-  onZoom,
-  onFit,
-}: {
-  onZoom: (factor: number) => void
-  onFit: () => void
-}) {
+export default function ToolDock() {
   const tool = useEditor((s) => s.tool)
   const setTool = useEditor((s) => s.setTool)
   const palette = useEditor((s) => s.palette)
   const colorIndex = useEditor((s) => s.colorIndex)
   const panel = useEditor((s) => s.panel)
   const openPanel = useEditor((s) => s.openPanel)
-  const openPicker = useEditor((s) => s.openPicker)
-  const vp = useEditor((s) => s.vp)
-  const showCodes = useEditor((s) => s.showCodes)
   const canUndo = useEditor((s) => s.canUndo)
   const canRedo = useEditor((s) => s.canRedo)
   const undo = useEditor((s) => s.undo)
   const redo = useEditor((s) => s.redo)
   const copy = t('editor')
+  const [newOpen, setNewOpen] = useState(false)
   const color = palette.colors[colorIndex]
 
   const launchers: Array<{
-    id: PanelId | 'boards'
+    id: PanelId
     label: string
     icon: React.ReactNode
     onClick: () => void
     expanded: boolean
   }> = [
+    {
+      id: 'boards',
+      label: copy.launchBoards,
+      icon: <SquaresFour size={17} aria-hidden />,
+      onClick: () => openPanel(panel === 'boards' ? null : 'boards'),
+      expanded: panel === 'boards',
+    },
     {
       id: 'image',
       label: copy.importImage,
@@ -80,13 +82,6 @@ export default function ToolDock({
       icon: <Palette size={17} aria-hidden />,
       onClick: () => openPanel(panel === 'color' ? null : 'color'),
       expanded: panel === 'color',
-    },
-    {
-      id: 'boards',
-      label: copy.launchBoards,
-      icon: <SquaresFour size={17} aria-hidden />,
-      onClick: () => openPicker('edit'),
-      expanded: false,
     },
     {
       id: 'transform',
@@ -104,19 +99,44 @@ export default function ToolDock({
     picker: { name: copy.toolPicker, hint: copy.toolPickerHint },
     select: { name: copy.toolSelect, hint: copy.toolSelectHint },
     rect: { name: copy.toolRect, hint: copy.toolRectHint },
+    pan: { name: copy.toolPan, hint: copy.toolPanHint },
   }
 
   return (
     <nav
-      aria-label={`${copy.launchImage}、${copy.tool}`}
+      aria-label={`${t('nav').library}、${copy.newProject}、${copy.launchImage}、${copy.tool}`}
       style={{ zIndex: Z.controls }}
       className="tool-dock absolute top-4 left-1/2 flex max-w-[calc(100vw-20.4px)] -translate-x-1/2 flex-wrap items-center justify-center gap-0.5 rounded-xl border border-line bg-surface/95 p-1.5 shadow-md"
     >
+        <Tip label={t('nav').library} placement="bottom">
+          <button
+            type="button"
+            aria-label={t('nav').library}
+            aria-expanded={panel === 'library'}
+            onClick={() => openPanel(panel === 'library' ? null : 'library')}
+            className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+              panel === 'library' ? 'bg-hover font-medium text-accent' : 'text-ink hover:bg-hover'
+            }`}
+          >
+            <Books size={17} aria-hidden />
+          </button>
+        </Tip>
+        <Tip label={copy.newProject} placement="bottom">
+          <button
+            type="button"
+            aria-label={copy.newProject}
+            onClick={() => setNewOpen(true)}
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-ink hover:bg-hover"
+          >
+            <Plus size={17} aria-hidden />
+          </button>
+        </Tip>
+
         {launchers.map((item) => (
           <Tip key={item.id} label={item.label} placement="bottom">
             <button
               type="button"
-              aria-expanded={item.id === 'boards' ? undefined : item.expanded}
+              aria-expanded={item.expanded}
               onClick={item.onClick}
               aria-label={item.label}
               className={`flex h-10 w-10 items-center justify-center rounded-lg text-sm ${
@@ -168,45 +188,6 @@ export default function ToolDock({
 
         <div aria-hidden className="mx-1 h-6 w-px bg-line" />
 
-        <Tip label={`${copy.zoom} −`} placement="bottom">
-          <button
-            type="button"
-            aria-label={`${copy.zoom} −`}
-            onClick={() => onZoom(1 / 1.25)}
-            className="flex h-10 w-10 items-center justify-center rounded-lg text-ink hover:bg-hover"
-          >
-            −
-          </button>
-        </Tip>
-        <span
-          className="px-1 text-xs text-ink-2 tabular"
-          title={showCodes && vp.zoom < CODE_ZOOM ? copy.viewCodesZoomHint : undefined}
-        >
-          {copy.pxPerCell(vp.zoom)}
-        </span>
-        <Tip label={`${copy.zoom} ＋`} placement="bottom">
-          <button
-            type="button"
-            aria-label={`${copy.zoom} ＋`}
-            onClick={() => onZoom(1.25)}
-            className="flex h-10 w-10 items-center justify-center rounded-lg text-ink hover:bg-hover"
-          >
-            ＋
-          </button>
-        </Tip>
-        <Tip label={copy.fitCanvasHint} placement="bottom">
-          <button
-            type="button"
-            onClick={onFit}
-            aria-label={copy.fitCanvas}
-            className="flex h-10 w-10 items-center justify-center rounded-lg text-ink hover:bg-hover"
-          >
-            <FrameCorners size={15} aria-hidden />
-          </button>
-        </Tip>
-
-        <div aria-hidden className="mx-1 h-6 w-px bg-line" />
-
         <Tip label={`${copy.undo}（Cmd/Ctrl+Z）`} placement="bottom">
           <button
             type="button"
@@ -229,6 +210,7 @@ export default function ToolDock({
             <ArrowClockwise size={15} aria-hidden />
           </button>
         </Tip>
+        <NewProjectDialog open={newOpen} onClose={() => setNewOpen(false)} />
 
     </nav>
   )

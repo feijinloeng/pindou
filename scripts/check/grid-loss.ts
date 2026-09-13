@@ -5,6 +5,7 @@
  */
 import assert from 'node:assert/strict'
 
+import { boardGuide, deriveLayoutGeometry } from '../../src/domain/board.ts'
 import { EMPTY, lostCells } from '../../src/domain/grid.ts'
 
 /** 全板可用（placeable 省略）或按遮罩给 */
@@ -47,4 +48,43 @@ function fill(g: ReturnType<typeof grid>, index: number, value = 0) {
   assert.equal(lostCells(g, { cols: 2, rows: 2, placeable: new Uint8Array(4) }), 0)
 }
 
-console.log('lostCells 自检通过（4 条）')
+// 5-8. Physical mini-board guide geometry: safe margin, 10×10 frames, 5×5 dashed crosses, seam gap
+{
+  const guide104 = boardGuide({ board: 'mini104', c0: 0, r0: 0 })
+  assert.ok(guide104)
+  assert.equal(guide104.left, 2)
+  assert.equal(guide104.right, 102)
+  assert.equal(guide104.solidCols.length, 11)
+  assert.equal(guide104.dashedCols[0], 7)
+  assert.equal(guide104.dashedCols.at(-1), 97)
+
+  const guide52 = boardGuide({ board: 'mini52', c0: 0, r0: 0 })
+  const next104 = boardGuide({ board: 'mini104', c0: 104, r0: 0 })
+  assert.ok(guide52)
+  assert.ok(next104)
+  assert.equal(guide52.left, 1)
+  assert.equal(next104.left - guide104.right, 4)
+  assert.equal(boardGuide({ board: 'midi29', c0: 0, r0: 0 }), null)
+
+  const blank = deriveLayoutGeometry({ placements: [], gapMm: 0 })
+  assert.equal(blank.boards.length, 0)
+  const irregular = deriveLayoutGeometry({
+    placements: [
+      { board: 'mini52', col: 0, row: 0 },
+      { board: 'mini26', col: 60, row: 7 },
+    ],
+    gapMm: 0,
+  })
+  assert.equal(irregular.boards.length, 2)
+  assert.equal(irregular.placeable[7 * irregular.cols + 60], 1)
+  const overlap = {
+    placements: [
+      { board: 'mini26', col: 0, row: 0 },
+      { board: 'mini26', col: 10, row: 10 },
+    ],
+    gapMm: 0,
+  }
+  assert.throws(() => deriveLayoutGeometry(overlap), /叠在一起/)
+}
+
+console.log('lostCells / boardGuide / free layout 自检通过（12 条）')

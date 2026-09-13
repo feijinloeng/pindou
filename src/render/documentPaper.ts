@@ -10,15 +10,15 @@ import {
   type SheetRange,
 } from './documentLayout'
 import {
-  BOARD_SEAM,
+  BOARD_GUIDE,
+  BOARD_GUIDE_DASH,
   SHEET_SEAM,
   drawAnnotations,
   drawCells,
   drawCoordinates,
-  strokeBoardSeams,
+  strokeBoardGuides,
   strokeGrid,
   THIN_GRID,
-  MAIN_GRID,
 } from './documentScreen'
 import { gray255, type PdfSink } from './pdf'
 
@@ -171,12 +171,11 @@ function drawSheet(sink: PdfSink, ctx: SheetDrawContext): void {
   // 豆子（按色分桶）
   drawCells(sink, grid, palette, sheet, origin, P)
 
-  // 网格：细网格每格，主网格每 10 格
-  strokeGrid(sink, sheet, origin, P, THIN_GRID, 1)
-  strokeGrid(sink, sheet, origin, P, MAIN_GRID, 10)
+  // 10×10 工作区保留灰格，黑色虚线下方的灰线段留空
+  strokeGrid(sink, sheet, origin, P, THIN_GRID, 1, ctx.geom)
 
-  // 板缝（红色）与页缝（蓝色虚线）必须一眼能区分
-  strokeBoardSeams(sink, ctx.geom, sheet, origin, P)
+  // 实体板定位线：黑色 10 格实线 + 5 格虚线十字
+  strokeBoardGuides(sink, ctx.geom, sheet, origin, P)
   strokeSheetSeams(sink, ctx, origin)
 
   // 坐标数字（全局列号 / 行号）
@@ -417,4 +416,4 @@ export function drawInstructions(sink: PdfSink): void {
   }
 }
 
-export { EMPTY, BOARD_SEAM, SHEET_SEAM }
+export { EMPTY, BOARD_GUIDE, BOARD_GUIDE_DASH, SHEET_SEAM }

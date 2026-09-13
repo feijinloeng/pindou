@@ -203,6 +203,7 @@ export async function buildPreviewPng(
     palette: ctx.palette,
     pxPerCell: options.pxPerCell,
     showCoords: options.showCoords,
+    boards: ctx.geom.boards,
   })
   if (canvas instanceof OffscreenCanvas) {
     const blob = await canvas.convertToBlob({ type: 'image/png' })

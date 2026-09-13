@@ -2,7 +2,7 @@
 
 /**
  * 语义 token：所有界面 chrome 都从这里取色，豆子本身的颜色不经过这里。
- * 暗色只换 chrome，图案 HEX / 白板参考色 / 导出产物永远不变。
+ * 界面固定使用浅色，图案 HEX / 白板参考色 / 导出产物永远不变。
  */
 :root {
   --workspace: #f2f4f3;
@@ -18,22 +18,6 @@
   --warn-bg: #fdf6e3;
   --warn-ink: #8a5a00;
   color-scheme: light;
-}
-
-[data-theme='dark'] {
-  --workspace: #171c1a;
-  --surface: #222925;
-  --hover: #2d3731;
-  --ink: #edf3ef;
-  --ink-2: #b6c3ba;
-  --line: #46544b;
-  --accent: #9acbad;
-  --on-accent: #17271d;
-  --focus: #9acbad;
-  --danger: #e08a82;
-  --warn-bg: #3a3220;
-  --warn-ink: #e8c780;
-  color-scheme: dark;
 }
 
 /* 让 Tailwind 工具类引用运行时变量：bg-surface / text-ink / border-line … */

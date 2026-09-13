@@ -120,6 +120,60 @@ export function downscale(
     : downscaleAverage(src, outW, outH)
 }
 
+/** Fit the source into the target grid with white letterboxing; never crop or stretch. */
+export function downscaleContained(src: SourceImage, outW: number, outH: number): DownscaleResult {
+  const width = Math.max(0, Math.floor(outW))
+  const height = Math.max(0, Math.floor(outH))
+  const out = new Uint8ClampedArray(width * height * 3)
+  out.fill(255)
+  if (!width || !height || !src.width || !src.height) return { width, height, data: out }
+
+  const scale = Math.min(width / src.width, height / src.height)
+  const imageWidth = src.width * scale
+  const imageHeight = src.height * scale
+  const left = (width - imageWidth) / 2
+  const top = (height - imageHeight) / 2
+
+  for (let oy = 0; oy < height; oy++) {
+    const cy = oy + 0.5
+    if (cy < top || cy >= top + imageHeight) continue
+    const sy0 = Math.max(0, Math.floor((oy - top) / scale))
+    const sy1 = Math.min(
+      src.height,
+      Math.max(sy0 + 1, Math.ceil((oy + 1 - top) / scale)),
+    )
+    for (let ox = 0; ox < width; ox++) {
+      const cx = ox + 0.5
+      if (cx < left || cx >= left + imageWidth) continue
+      const sx0 = Math.max(0, Math.floor((ox - left) / scale))
+      const sx1 = Math.min(
+        src.width,
+        Math.max(sx0 + 1, Math.ceil((ox + 1 - left) / scale)),
+      )
+      let r = 0
+      let g = 0
+      let b = 0
+      let n = 0
+      for (let sy = sy0; sy < sy1; sy++) {
+        for (let sx = sx0; sx < sx1; sx++) {
+          const i = (sy * src.width + sx) * 4
+          r += srgbToLinear(src.data[i])
+          g += srgbToLinear(src.data[i + 1])
+          b += srgbToLinear(src.data[i + 2])
+          n++
+        }
+      }
+      if (!n) continue
+      const rgb = linearToRgb([r / n, g / n, b / n])
+      const o = (oy * width + ox) * 3
+      out[o] = rgb[0]
+      out[o + 1] = rgb[1]
+      out[o + 2] = rgb[2]
+    }
+  }
+  return { width, height, data: out }
+}
+
 export type FitMode = 'cover' | 'contain' | 'stretch'
 
 /**

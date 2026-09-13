@@ -270,7 +270,7 @@ export function planAnnotations(
   const degraded: boolean[] = []
   for (let i = 0; i < palette.colors.length; i++) {
     const color = palette.colors[i]
-    const byCode = Math.min(P * 0.45, (P * 1.6) / color.code.length)
+    const byCode = Math.min(P * 0.7, (P * 1.8) / color.code.length)
     if (byCode < opts.numberBelowPt && usage[i] > 0) {
       const number = numbers.get(color.code) ?? color.code
       codeFor[i] = number

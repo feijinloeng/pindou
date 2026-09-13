@@ -286,6 +286,7 @@ export function Menu({
   align = 'left',
   width = 'w-64',
   triggerVariant = 'secondary',
+  placement = 'bottom',
 }: {
   label: ReactNode
   title?: string
@@ -293,6 +294,7 @@ export function Menu({
   align?: 'left' | 'right'
   width?: string
   triggerVariant?: BtnVariant
+  placement?: 'top' | 'bottom'
 }) {
   const [open, setOpen] = useState(false)
   const close = () => setOpen(false)
@@ -344,8 +346,18 @@ export function Menu({
           role="menu"
           aria-label={title}
           onKeyDown={onMenuKey}
-          style={{ zIndex: Z.menu, transformOrigin: align === 'right' ? 'top right' : 'top left' }}
-          className={`absolute top-full mt-1 flex flex-col gap-0.5 rounded-xl border border-line bg-surface p-1 shadow-lg ${width} ${
+          style={{
+            zIndex: Z.menu,
+            transformOrigin:
+              placement === 'top'
+                ? align === 'right'
+                  ? 'bottom right'
+                  : 'bottom left'
+                : align === 'right'
+                  ? 'top right'
+                  : 'top left',
+          }}
+          className={`absolute ${placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'} flex flex-col gap-0.5 rounded-xl border border-line bg-surface p-1 shadow-lg ${width} ${
             align === 'right' ? 'right-0' : 'left-0'
           } ${exiting ? 'pointer-events-none' : ''}`}
         >

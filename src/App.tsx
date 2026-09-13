@@ -26,7 +26,7 @@ export default function App() {
   // 编辑器带文档头；应用导航只出现在作品库
   const chrome = route === 'library'
 
-  // 主题/动效偏好应用到 <html>（data-theme / data-motion）
+  // 动效偏好应用到 <html>（data-motion）；界面固定浅色
   useEffect(() => applyUiPrefs(), [])
 
   // 换页时整块内容淡入（180ms，不位移：transform 会改掉画布浮层的包含块）

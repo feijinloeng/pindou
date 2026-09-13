@@ -3,7 +3,6 @@ import { useEffect, useRef } from 'react'
 import { shouldHandleCanvasKey } from '../editor/keyboard'
 import { escapeTopmost, hasOverlay, Z } from '../components/overlayState'
 
-import BoardPicker from './BoardPicker'
 import CanvasStage from '../components/CanvasStage'
 import ExportStage from '../components/ExportStage'
 import NoticeHost from '../components/NoticeHost'
@@ -20,12 +19,13 @@ const TOOL_KEYS: Record<string, ToolId> = {
   i: 'picker',
   g: 'bucket',
   m: 'rect',
+  h: 'pan',
 }
 
 export default function Editor() {
-  const pickerOpen = useEditor((s) => s.pickerOpen)
   const stage = useEditor((s) => s.stage)
-  const editing = !pickerOpen && stage === 'edit'
+  const panel = useEditor((s) => s.panel)
+  const projectId = useEditor((s) => s.projectId)
   const rootRef = useRef<HTMLDivElement>(null)
 
   // 首次编辑器显示：头 180ms、画布 220ms、dock 240ms，总时长不超 400ms。
@@ -42,8 +42,8 @@ export default function Editor() {
       // 正在输入框/下拉框里打字，或输入法正在组合：快捷键让路，别抢 V/B/E/I/G/M、Cmd+A、Cmd+C
       if (!shouldHandleCanvasKey(e)) return
       const s = useEditor.getState()
-      // 选板页和导出页不是画布：除了 Escape，快捷键一律不响应
-      if ((s.pickerOpen || s.stage === 'export') && e.key !== 'Escape') return
+      // 导出页不是画布：除了 Escape，快捷键一律不响应
+      if (s.stage === 'export' && e.key !== 'Escape') return
       const mod = e.metaKey || e.ctrlKey
       if (e.key === 'Escape') {
         // 一次只退一层：浮层栈顶 → 面板 → 选区
@@ -98,25 +98,18 @@ export default function Editor() {
       </div>
 
       <div className="relative h-full min-h-0">
-        {/* 画布常驻：导出/选板只是盖在它上面，回来视口、工具、选区都还是原来那一眼 */}
-        <div
-          className={`canvas-layer absolute inset-0 ${editing ? '' : 'pointer-events-none invisible'}`}
-          aria-hidden={!editing}
-        >
-          <CanvasStage />
+        {/* 画布常驻：导出覆盖它，画板/色号等面板只浮在左侧，不接管整页 */}
+        <div className="canvas-layer absolute inset-0">
+          <CanvasStage key={projectId} />
         </div>
 
-        {pickerOpen ? (
-          <div className="absolute inset-0 flex flex-col bg-workspace">
-            <BoardPicker />
-          </div>
-        ) : stage === 'export' ? (
+        {stage === 'export' ? (
           <div className="absolute inset-0 flex flex-col bg-workspace">
             <ExportStage />
           </div>
         ) : (
           <>
-            <SelectionBar />
+            {panel === 'library' ? null : <SelectionBar />}
             <PanelHost />
           </>
         )}
