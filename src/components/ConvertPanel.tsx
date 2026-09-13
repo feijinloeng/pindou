@@ -1,11 +1,17 @@
 import { useEffect, useRef } from 'react'
 
 import { AUTO_OPTION, resolveDither, STRATEGY_LIST } from '../conversion/strategies'
+import { EMPTY } from '../domain/grid'
 import { useEditor } from '../editor/store'
 import { t } from '../i18n/zh'
 import type { SourceImage } from '../conversion/types'
-import { Btn, Label, Panel } from './ui'
+import { Btn, Label } from './ui'
 
+/**
+ * 导图片 → 调参数 → 应用到画布。
+ * 常用的四项（色数、去背景、对位、应用）直接摆出来，抖动的具体做法、
+ * 内容类型、裁切、覆盖设置收在「更多调整」里。
+ */
 export default function ConvertPanel() {
   const sourceImage = useEditor((s) => s.sourceImage)
   const sourceName = useEditor((s) => s.sourceName)
@@ -14,7 +20,6 @@ export default function ConvertPanel() {
   const converting = useEditor((s) => s.converting)
   const progress = useEditor((s) => s.progress)
   const lastConvert = useEditor((s) => s.lastConvert)
-  const grid = useEditor((s) => s.grid)
   const fileRef = useRef<HTMLInputElement>(null)
   // 显示"实际生效"的抖动，不是参数里的 null。选了“自动”时实际值要转换完才知道
   const auto = conversion.strategyId === 'auto'
@@ -22,8 +27,22 @@ export default function ConvertPanel() {
   const a = useEditor.getState()
   const copy = t('convert')
 
+  /** 画布上有东西就先问一句：转换会覆盖它（这一步本身可以撤销） */
+  const apply = () => {
+    const grid = useEditor.getState().grid
+    let occupied = false
+    for (let i = 0; i < grid.cells.length; i++) {
+      if (grid.cells[i] !== EMPTY) {
+        occupied = true
+        break
+      }
+    }
+    if (occupied && !window.confirm(copy.replaceConfirm)) return
+    void a.runConvert()
+  }
+
   return (
-    <Panel title={copy.title}>
+    <div className="flex flex-col gap-3 px-3 py-3">
       <input
         ref={fileRef}
         type="file"
@@ -45,30 +64,11 @@ export default function ConvertPanel() {
       </div>
       {sourceImage && <SourceThumb image={sourceImage} />}
       <p className="truncate text-[11px] text-neutral-500" title={sourceName ?? ''}>
-        {sourceName ? `${copy.imported}：${sourceName}` : copy.none} · 画布 {grid.cols}×
-        {grid.rows}
+        {sourceName ? `${copy.imported}：${sourceName}` : copy.none}
       </p>
       {sourceCached && (
         <p className="rounded bg-amber-50 p-1.5 text-[11px] text-amber-800">{copy.cachedSource}</p>
       )}
-
-      <label className="flex flex-col gap-1 text-xs text-neutral-600">
-        {copy.strategy}
-        <select
-          className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs"
-          value={conversion.strategyId}
-          onChange={(e) => a.setConversion({ strategyId: e.target.value as never })}
-        >
-          <option value={AUTO_OPTION.id}>
-            {AUTO_OPTION.label} · {AUTO_OPTION.description}
-          </option>
-          {STRATEGY_LIST.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label} · {s.description}
-            </option>
-          ))}
-        </select>
-      </label>
 
       <Label value={conversion.maxColors === 0 ? copy.unlimited : conversion.maxColors}>
         {copy.maxColors}
@@ -79,49 +79,10 @@ export default function ConvertPanel() {
         max={64}
         step={1}
         value={conversion.maxColors}
+        aria-label={copy.maxColors}
         onChange={(e) => a.setConversion({ maxColors: Number(e.target.value) })}
       />
 
-      <label className="flex items-center gap-2 text-xs text-neutral-600">
-        <input
-          type="checkbox"
-          checked={dither > 0}
-          onChange={(e) =>
-            // 关掉要写 0（明确关），不能写 null —— null 是"跟随内容类型默认值"
-            a.setConversion({ dither: e.target.checked ? (dither > 0 ? dither : 0.55) : 0 })
-          }
-        />
-        {copy.dither}
-        {dither > 0 && (
-          <input
-            type="range"
-            min={0.05}
-            max={1}
-            step={0.05}
-            value={dither}
-            onChange={(e) => a.setConversion({ dither: Number(e.target.value) })}
-            className="flex-1"
-          />
-        )}
-      </label>
-      <p className="text-[11px] text-neutral-500">
-        {conversion.dither !== null
-          ? dither > 0
-            ? `手动抖动 ${dither}`
-            : '已关掉抖动'
-          : auto
-            ? '抖动跟随自动选定的档位（转换后显示实际值）'
-            : `「${STRATEGY_BY_ID(conversion.strategyId)}」默认${dither > 0 ? `抖动 ${dither}` : '不抖动'}`}
-      </p>
-
-      <label className="flex items-center gap-2 text-xs text-neutral-600">
-        <input
-          type="checkbox"
-          checked={conversion.cropToSubject}
-          onChange={(e) => a.setConversion({ cropToSubject: e.target.checked })}
-        />
-        {copy.crop}
-      </label>
       <label className="flex items-center gap-2 text-xs text-neutral-600">
         <input
           type="checkbox"
@@ -129,14 +90,6 @@ export default function ConvertPanel() {
           onChange={(e) => a.setConversion({ removeBackground: e.target.checked })}
         />
         {copy.background}
-      </label>
-      <label className="flex items-center gap-2 text-xs text-neutral-600">
-        <input
-          type="checkbox"
-          checked={conversion.clearExisting}
-          onChange={(e) => a.setConversion({ clearExisting: e.target.checked })}
-        />
-        {copy.clear}
       </label>
 
       <label className="flex flex-col gap-1 text-xs text-neutral-600">
@@ -152,8 +105,8 @@ export default function ConvertPanel() {
         </select>
       </label>
 
-      <Btn onClick={() => void a.runConvert()} disabled={converting || !sourceName}>
-        {converting ? `${copy.running}…` : lastConvert ? copy.rerun : copy.run}
+      <Btn onClick={apply} disabled={converting || !sourceName}>
+        {converting ? `${copy.running}…` : lastConvert ? copy.rerun : copy.apply}
       </Btn>
 
       {progress && (
@@ -168,15 +121,91 @@ export default function ConvertPanel() {
 
       {lastConvert && (
         <div className="rounded bg-neutral-50 p-2 text-[11px] leading-relaxed text-neutral-600">
-          {copy.result}：{lastConvert.used} 色 · {lastConvert.ms} ms ·{' '}
-          {kindLabel(lastConvert.kind)}
+          {copy.result}：{lastConvert.used} 色 · {lastConvert.ms} ms · {kindLabel(lastConvert.kind)}
           {auto ? ` · 自动选了「${STRATEGY_BY_ID(lastConvert.strategy)}」` : ''}
           {lastConvert.cropped ? ' · 已裁到主体' : ''}
           {lastConvert.cropSkipped ? ' · 背景不确定，没自动裁' : ''}
           {lastConvert.dropped > 0 ? ` · 限色并掉了 ${lastConvert.dropped} 色` : ''}
         </div>
       )}
-    </Panel>
+
+      <details className="border-t border-neutral-200 pt-2">
+        <summary className="cursor-pointer text-[11px] font-semibold tracking-wide text-neutral-500">
+          {copy.more}
+        </summary>
+        <div className="mt-2 flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-xs text-neutral-600">
+            {copy.strategy}
+            <select
+              className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs"
+              value={conversion.strategyId}
+              onChange={(e) => a.setConversion({ strategyId: e.target.value as never })}
+            >
+              <option value={AUTO_OPTION.id}>
+                {AUTO_OPTION.label} · {AUTO_OPTION.description}
+              </option>
+              {STRATEGY_LIST.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label} · {s.description}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-2 text-xs text-neutral-600">
+            <input
+              type="checkbox"
+              checked={dither > 0}
+              onChange={(e) =>
+                // 关掉要写 0（明确关），不能写 null —— null 是"跟随内容类型默认值"
+                a.setConversion({ dither: e.target.checked ? (dither > 0 ? dither : 0.55) : 0 })
+              }
+            />
+            {copy.dither}
+            {dither > 0 && (
+              <input
+                type="range"
+                min={0.05}
+                max={1}
+                step={0.05}
+                value={dither}
+                aria-label={copy.dither}
+                onChange={(e) => a.setConversion({ dither: Number(e.target.value) })}
+                className="flex-1"
+              />
+            )}
+          </label>
+          <p className="text-[11px] leading-relaxed text-neutral-500">
+            {copy.ditherHint}
+            <br />
+            {conversion.dither !== null
+              ? dither > 0
+                ? `手动抖动 ${dither}`
+                : '已关掉抖动'
+              : auto
+                ? '抖动跟随自动选定的档位（转换后显示实际值）'
+                : `「${STRATEGY_BY_ID(conversion.strategyId)}」默认${dither > 0 ? `抖动 ${dither}` : '不抖动'}`}
+          </p>
+
+          <label className="flex items-center gap-2 text-xs text-neutral-600">
+            <input
+              type="checkbox"
+              checked={conversion.cropToSubject}
+              onChange={(e) => a.setConversion({ cropToSubject: e.target.checked })}
+            />
+            {copy.crop}
+          </label>
+          <label className="flex items-center gap-2 text-xs text-neutral-600">
+            <input
+              type="checkbox"
+              checked={conversion.clearExisting}
+              onChange={(e) => a.setConversion({ clearExisting: e.target.checked })}
+            />
+            {copy.clear}
+          </label>
+        </div>
+      </details>
+    </div>
   )
 }
 

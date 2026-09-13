@@ -74,6 +74,27 @@ export function usedCells(g: CellGrid): number {
   return n
 }
 
+/**
+ * 换成下一个板阵会丢掉的非空格子数。
+ * 换板阵前先把代价算出来，别让用户点完才发现内容少了。
+ */
+export function lostCells(
+  g: CellGrid,
+  next: { cols: number; rows: number; placeable: Uint8Array },
+): number {
+  let lost = 0
+  for (let i = 0; i < g.cells.length; i++) {
+    if (g.cells[i] === EMPTY) continue
+    if (g.placeable && g.placeable[i] !== 1) continue
+    const col = i % g.cols
+    const row = (i - col) / g.cols
+    if (col >= next.cols || row >= next.rows || next.placeable[row * next.cols + col] !== 1) {
+      lost++
+    }
+  }
+  return lost
+}
+
 /** 每个色板索引被用了多少格（空档和越界索引都不算）。paletteSize 之外的索引会被忽略。 */
 export function usageByIndex(g: CellGrid, paletteSize: number): Uint32Array {
   const out = new Uint32Array(paletteSize)

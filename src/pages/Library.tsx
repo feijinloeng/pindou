@@ -82,15 +82,30 @@ export default function Library() {
   const openProject = async (id: string) => {
     try {
       // 优先打开草稿（可能比正式保存的更新）
+      const entry = entries.find((e) => e.project.id === id)
       const draft = await getDraft(id)
-      const target = draft ?? entries.find((e) => e.project.id === id)?.project
+      const target = draft ?? entry?.project
       if (!target) return
-      useEditor.getState().loadProject(target)
+      // 草稿比正式工程新 = 这份内容还没经过一次正式保存，导出前要先保存
+      useEditor.getState().loadProject(target, !entry?.hasNewerDraft)
       setError(null)
       navigate('editor')
     } catch (cause) {
       setError(`打开失败：${message(cause)}`)
     }
+  }
+
+  /** 跟着拼：同一个作品换个页面用，不强制走编辑那一步 */
+  const followProject = async (id: string) => {
+    await openProjectSilently(id)
+    navigate('follow')
+  }
+
+  const openProjectSilently = async (id: string) => {
+    const entry = entries.find((e) => e.project.id === id)
+    const draft = await getDraft(id)
+    const target = draft ?? entry?.project
+    if (target) useEditor.getState().loadProject(target, !entry?.hasNewerDraft)
   }
 
   const duplicate = (project: Project) =>
@@ -219,6 +234,7 @@ export default function Library() {
             key={entry.project.id}
             entry={entry}
             onOpen={() => void openProject(entry.project.id)}
+            onFollow={() => void followProject(entry.project.id)}
             onDuplicate={() => void duplicate(entry.project)}
             onRename={() => void rename(entry.project)}
             onDelete={() => void remove(entry.project)}
@@ -242,6 +258,7 @@ export default function Library() {
 function ProjectCard({
   entry,
   onOpen,
+  onFollow,
   onDuplicate,
   onRename,
   onDelete,
@@ -251,6 +268,7 @@ function ProjectCard({
 }: {
   entry: LibraryEntry
   onOpen: () => void
+  onFollow: () => void
   onDuplicate: () => void
   onRename: () => void
   onDelete: () => void
@@ -308,6 +326,7 @@ function ProjectCard({
       </button>
       <div className="flex flex-wrap gap-1">
         <Btn onClick={onOpen}>{copy.open}</Btn>
+        <Btn onClick={onFollow}>{copy.follow}</Btn>
         <Btn onClick={onDuplicate}>{copy.duplicate}</Btn>
         <Btn onClick={onRename}>{copy.rename}</Btn>
         <Btn onClick={onExport}>{copy.exportProject}</Btn>

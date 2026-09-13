@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "oxlint --deny-warnings",
     "typecheck": "tsc -b --noEmit",
-    "build:palettes": "node scripts/data/build-palettes.ts"
+    "build:palettes": "node scripts/data/build-palettes.ts",
+    "check": "node scripts/check/grid-loss.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2",

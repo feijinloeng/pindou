@@ -47,6 +47,11 @@ import type { SourceImage } from '../conversion/types'
 
 export type ToolId = 'select' | 'pencil' | 'eraser' | 'picker' | 'bucket' | 'rect'
 
+/** 画布旁边同一时间只开一个临时面板 */
+export type PanelId = 'color' | 'image'
+/** 两个目的地：编辑 / 导出 */
+export type Stage = 'edit' | 'export'
+
 export interface EditorState {
   /** 作品名（导出文件名用它） */
   name: string
@@ -107,11 +112,10 @@ export interface EditorState {
     cropSkipped: boolean
   } | null
 
-  /** 应用一个板阵预设（压测用），成功返回 null，失败返回错误文案 */
-  applyPreset(presetId: string): string | null
   /** 应用自由拼出来的板阵。keepContent=false 时清空画布（换板阵通常要清） */
   applyLayout(layout: BoardLayout, keepContent?: boolean): string | null
-  openPicker(): void
+  /** 打开选板页。取消时回 returnTo 指的地方，不静默丢掉排板 */
+  openPicker(returnTo?: 'library' | 'edit'): void
   closePicker(): void
   setName(name: string): void
   setCustomer(customer: string | null): void
@@ -121,10 +125,10 @@ export interface EditorState {
   resetMaking(): void
   /** 把当前状态打包成工程对象 */
   toProject(): Project
-  /** 立刻落盘（自动保存和手动保存都走它） */
-  saveNow(): Promise<void>
-  /** 打开一个工程（作品库点进来时用） */
-  loadProject(project: Project): void
+  /** 立刻落盘：explicit=true 表示用户自己点的保存（会打开导出这条路） */
+  saveNow(explicit?: boolean): Promise<void>
+  /** 打开一个工程（作品库点进来时用）。saved=false 表示这份内容还没经过一次正式保存 */
+  loadProject(project: Project, saved?: boolean): void
   /** 新建一个空工程 */
   newProject(name?: string, presetId?: string): void
   /** 刷新后把上次的草稿捡回来 */
@@ -137,9 +141,20 @@ export interface EditorState {
   setShowCodes(show: boolean): void
   setVp(vp: Viewport): void
   fitTo(width: number, height: number, dpr?: number): void
-  /** 两侧面板展开还是收起（纯界面状态，不进工程文件） */
-  panelsOpen: boolean
-  togglePanels(): void
+  /** 画布旁开着哪个临时面板（纯界面状态，不进工程文件） */
+  panel: PanelId | null
+  /** 颜色面板钉住：连续取色时不自动关 */
+  colorPinned: boolean
+  /** 当前目的地：编辑 / 导出 */
+  stage: Stage
+  /** 保存那一刻的 commitVersion。等于当前值才允许直接去导出 */
+  savedCommitVersion: number | null
+  /** 取消选板时回哪里 */
+  pickerReturn: 'library' | 'edit'
+  openPanel(panel: PanelId | null): void
+  setColorPinned(pinned: boolean): void
+  openExport(): void
+  closeExport(): void
   pointerDown(col: number, row: number, button: number, shift: boolean): void
   pointerMove(col: number, row: number): void
   pointerUp(): void
@@ -179,9 +194,12 @@ let rectAnchor: { col: number; row: number } | null = null
 let saveChain: Promise<void> = Promise.resolve()
 let queuedSaves = 0
 
-function enqueueSave(run: () => Promise<void>): Promise<void> {
+function enqueueSave(run: (explicit: boolean) => Promise<void>, explicit: boolean): Promise<void> {
   queuedSaves++
-  const next = saveChain.then(run, run).finally(() => {
+  const next = saveChain.then(
+    () => run(explicit),
+    () => run(explicit),
+  ).finally(() => {
     queuedSaves--
   })
   saveChain = next
@@ -220,7 +238,11 @@ export const useEditor = create<EditorState>((set, get) => ({
   pickerOpen: true,
   projectId: 'local-draft',
   customer: null,
-  panelsOpen: true,
+  panel: null,
+  colorPinned: false,
+  stage: 'edit',
+  savedCommitVersion: null,
+  pickerReturn: 'library',
   createdAt: new Date().toISOString(),
   making: { completedCodes: [], completedRegions: {}, focusCode: null, startedAt: null },
   recommendStrategy: 'largest',
@@ -252,15 +274,6 @@ export const useEditor = create<EditorState>((set, get) => ({
   converting: false,
   progress: null,
   lastConvert: null,
-
-  applyPreset(presetId) {
-    const preset = BOARD_PRESETS.find((p) => p.id === presetId)
-    if (!preset) return '没有这个预设'
-    return get().applyLayout({
-      placements: placementsFromArray(preset.array),
-      gapMm: preset.array.gapMm,
-    })
-  },
 
   applyLayout(layout, keepContent = true) {
     let geom: BoardGeometry
@@ -303,6 +316,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       pending: null,
       converting: false,
       progress: null,
+      stage: 'edit',
+      panel: null,
       vp: fitViewport(geom.cols, geom.rows, 900, 700),
       notice:
         cells > WARN_CELLS
@@ -313,12 +328,35 @@ export const useEditor = create<EditorState>((set, get) => ({
     return null
   },
 
-  openPicker() {
-    set({ pickerOpen: true })
+  openPicker(returnTo = 'edit') {
+    set({ pickerOpen: true, pickerReturn: returnTo, stage: 'edit', panel: null })
   },
 
   closePicker() {
     set({ pickerOpen: false })
+  },
+
+  openPanel(panel) {
+    set({ panel })
+  },
+
+  setColorPinned(colorPinned) {
+    set({ colorPinned })
+  },
+
+  openExport() {
+    // 门是给别人看的，这里再挡一次：没保存的当前内容不许直接导出
+    const { savedCommitVersion, commitVersion } = get()
+    if (savedCommitVersion !== commitVersion) {
+      set({ notice: '先保存当前内容，再导出' })
+      return
+    }
+    set({ stage: 'export', panel: null })
+  },
+
+  closeExport() {
+    // 画布位置和缩放一直留在 vp 里，回来就是原来那一眼
+    set({ stage: 'edit' })
   },
 
   setName(name) {
@@ -327,10 +365,6 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   setCustomer(customer) {
     set({ customer })
-  },
-
-  togglePanels() {
-    set({ panelsOpen: !get().panelsOpen })
   },
 
   setRecommendStrategy(recommendStrategy) {
@@ -398,12 +432,15 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
   },
 
-  async saveNow() {
+  /** 后台自动保存（explicit=false）只保命，不算"用户保存好了" */
+  async saveNow(explicit = false) {
     if (typeof indexedDB === 'undefined') return
     set({ saving: true })
-    return enqueueSave(async () => {
+    return enqueueSave(async (isExplicit) => {
       // 快照在"轮到这一次"的时候才取：排队期间的新编辑不会被旧快照覆盖
       const state = get()
+      // 这次保存覆盖的是这一刻的内容：之后任何改动都会让 commitVersion 超过它
+      const commitAtSave = state.commitVersion
       try {
         const project = state.toProject()
         await putProject(project)
@@ -411,20 +448,29 @@ export const useEditor = create<EditorState>((set, get) => ({
         rememberLastProject(project.id)
         // 后面还有人排队就不算"保存完了"，否则界面会骗人
         const last = queuedSaves <= 1
-        set({ savedAt: last ? project.updatedAt : get().savedAt, saving: !last, saveError: null })
+        set({
+          savedAt: last ? project.updatedAt : get().savedAt,
+          // 只有用户自己点的那一次（或者打开已保存工程）才开门去导出。
+          // 后台自动保存不能把流程往前推：它只保证内容没丢
+          savedCommitVersion:
+            last && isExplicit ? commitAtSave : get().savedCommitVersion,
+          saving: !last,
+          saveError: null,
+        })
       } catch (error) {
         const message = error instanceof Error ? error.message : '未知错误'
         set({ saving: false, saveError: message, notice: `保存失败：${message}` })
       }
-    })
+    }, explicit)
   },
 
-  loadProject(project) {
+  loadProject(project, saved = true) {
     // 网格遮罩、空档脏数据、尺寸不一致全交给同一个规范化函数，
     // 不在这里再写一遍（两边不一致就是 bug 温床）
     const geom = deriveLayoutGeometry(project.layout)
     const normalized = normalizeGridForLayout(project.grid, geom)
     const pid = getPalette(project.paletteId).id
+    const commitVersion = get().commitVersion + 1
     invalidateConversion()
     history.clear()
     recording = null
@@ -456,12 +502,15 @@ export const useEditor = create<EditorState>((set, get) => ({
       sourceImage: null,
       sourceName: null,
       sourceCached: false,
-      savedAt: null,
+      savedAt: saved ? project.updatedAt : null,
+      savedCommitVersion: saved ? commitVersion : null,
       saving: false,
       saveError: null,
+      panel: null,
+      stage: 'edit',
       notice: `已打开《${project.name}》`,
       version: get().version + 1,
-      commitVersion: get().commitVersion + 1,
+      commitVersion,
       canUndo: false,
       canRedo: false,
       undoBytes: 0,
@@ -503,8 +552,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       paletteId: get().paletteId,
       grid: createGrid(geom.cols, geom.rows, EMPTY, geom.placeable),
     })
-    get().loadProject(project)
-    set({ notice: '新建作品', pickerOpen: true })
+    get().loadProject(project, false)
+    set({ notice: '新建作品', pickerOpen: true, pickerReturn: 'library' })
   },
 
   setTool(tool) {
@@ -515,7 +564,9 @@ export const useEditor = create<EditorState>((set, get) => ({
     const { palette, allowedCodes, colorIndex } = get()
     const safe = normalizeColorIndex(palette, allowedCodes, index)
     if (safe !== null) {
-      set({ colorIndex: safe, notice: null })
+      const { panel, colorPinned } = get()
+      // 默认选完色就收起颜色面板，把画布还回去；钉住了才留着连续取色
+      set({ colorIndex: safe, notice: null, panel: panel === 'color' && !colorPinned ? null : panel })
       return
     }
     // 非法索引或已被排除的色号：不写进状态。
@@ -845,8 +896,8 @@ export const useEditor = create<EditorState>((set, get) => ({
           putImage(id, { name: file.name, blob: cached.blob, width: cached.width, height: cached.height }),
         )
         .catch(() => undefined)
-      // 导入完直接转：只按一次按钮才看得到结果，中间那步「再点转换」会让人以为没反应
-      await get().runConvert()
+      // 导入完成就开图片面板：参数、应用都在那里，不在画布上摆一排设置
+      set({ panel: 'image' })
     } catch (error) {
       if (generation !== conversionGeneration) return
       set({ notice: error instanceof Error ? error.message : '图片读不进来' })
@@ -960,6 +1011,8 @@ export const useEditor = create<EditorState>((set, get) => ({
         commitVersion: current.commitVersion + 1,
         converting: false,
         progress: null,
+        // 应用完收起图片面板，把画布还回去；想再调从菜单里重新打开
+        panel: null,
         lastConvert: {
           ms: result.ms,
           kind: result.kindOfSource,

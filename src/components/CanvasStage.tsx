@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { usedCells } from '../domain/grid'
 import { t } from '../i18n/zh'
 import { useEditor } from '../editor/store'
 import { shouldHandleCanvasKey } from '../editor/keyboard'
@@ -9,6 +10,7 @@ import {
   clampViewport,
   panBy,
   screenToCell,
+  zoomAt,
   zoomFromWheel,
   type Viewport,
 } from '../render/canvasViewport'
@@ -37,6 +39,27 @@ export default function CanvasStage() {
   const selection = useEditor((s) => s.selection)
   const setVp = useEditor((s) => s.setVp)
   const fitTo = useEditor((s) => s.fitTo)
+  const openPanel = useEditor((s) => s.openPanel)
+  const copy = t('editor')
+  /** 空画布上的两个入口：导入图片 / 直接画。动过画笔就不再出现 */
+  const [promptDismissed, setPromptDismissed] = useState(false)
+  const empty = useMemo(
+    () => usedCells(grid) === 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [grid, commitVersion],
+  )
+
+  /** 以画布中心为锚缩放：点 +/− 时不想把编辑目标甩出去 */
+  const stepZoom = (factor: number) =>
+    setVp(
+      clampViewport(
+        zoomAt(vp, vp.zoom * factor, size.width / 2, size.height / 2),
+        grid.cols,
+        grid.rows,
+        size.width,
+        size.height,
+      ),
+    )
 
   const [dpr, setDpr] = useState(() =>
     typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2),
@@ -295,6 +318,7 @@ export default function CanvasStage() {
         }}
         onContextMenu={(e) => e.preventDefault()}
         onPointerDown={(e) => {
+          setPromptDismissed(true)
           const { x, y } = localPoint(e)
           const cell = screenToCell(vp, x, y)
           e.currentTarget.setPointerCapture(e.pointerId)
@@ -327,7 +351,28 @@ export default function CanvasStage() {
           useEditor.getState().pointerUp()
         }}
       />
-      <div className="pointer-events-none absolute right-3 bottom-3 flex items-center gap-2">
+      <div className="pointer-events-none absolute right-3 bottom-3 z-10 flex items-center gap-1">
+        <button
+          type="button"
+          aria-label={`${t('editor').zoom} −`}
+          title="缩小"
+          onClick={() => stepZoom(1 / 1.25)}
+          className="pointer-events-auto h-7 w-7 rounded border border-neutral-300 bg-white/90 text-sm text-neutral-700 hover:bg-white"
+        >
+          −
+        </button>
+        <span className="rounded bg-white/80 px-2 py-1 text-xs tabular-nums text-neutral-600">
+          {vp.zoom >= CODE_ZOOM ? '100%+ 色号' : `${Math.round(vp.zoom * 100)}%`}
+        </span>
+        <button
+          type="button"
+          aria-label={`${t('editor').zoom} ＋`}
+          title="放大"
+          onClick={() => stepZoom(1.25)}
+          className="pointer-events-auto h-7 w-7 rounded border border-neutral-300 bg-white/90 text-sm text-neutral-700 hover:bg-white"
+        >
+          ＋
+        </button>
         <button
           type="button"
           onClick={() => fitTo(size.width, size.height, dpr)}
@@ -336,9 +381,31 @@ export default function CanvasStage() {
         >
           {t('editor').fitCanvas}
         </button>
-        <span className="rounded bg-white/80 px-2 py-1 text-xs tabular-nums text-neutral-600">
-          {vp.zoom >= CODE_ZOOM ? '100%+ 色号' : `${Math.round(vp.zoom * 100)}%`}
-        </span>
+      </div>
+      <div className="pointer-events-none absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
+        {empty && !promptDismissed && (
+          <div className="pointer-events-auto flex w-56 flex-col gap-2 rounded border border-neutral-300 bg-white/95 p-3 text-center shadow-lg">
+            <p className="text-xs font-medium text-neutral-700">{copy.emptyTitle}</p>
+            <button
+              type="button"
+              onClick={() => {
+                setPromptDismissed(true)
+                openPanel('image')
+              }}
+              className="rounded border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs text-white"
+            >
+              {copy.emptyImport}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPromptDismissed(true)}
+              className="rounded border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-100"
+            >
+              {copy.emptyDraw}
+            </button>
+            <p className="text-[11px] text-neutral-500">{copy.emptyHint}</p>
+          </div>
+        )}
       </div>
       <p id="canvas-help" className="sr-only">
         方向键移动光标，按住 Shift 加方向键一次跳 5 格，Enter 把当前工具用在光标那一格上。

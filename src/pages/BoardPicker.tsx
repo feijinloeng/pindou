@@ -3,10 +3,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BOARD_PROFILES,
   deriveLayoutGeometry,
+  type BoardGeometry,
   type BoardPlacement,
   type BoardTypeId,
 } from '../domain/board'
+import { lostCells } from '../domain/grid'
 import { useEditor } from '../editor/store'
+import { navigate } from '../router'
 import { t } from '../i18n/zh'
 
 const ORDER: BoardTypeId[] = ['mini26', 'mini52', 'mini78', 'mini104', 'midi29']
@@ -24,9 +27,8 @@ interface Draft extends BoardPlacement {
 export default function BoardPicker() {
   const layout = useEditor((s) => s.layout)
   const applyLayout = useEditor((s) => s.applyLayout)
-  const applyPreset = useEditor((s) => s.applyPreset)
-  const setNotice = useEditor((s) => s.setNotice)
   const closePicker = useEditor((s) => s.closePicker)
+  const pickerReturn = useEditor((s) => s.pickerReturn)
   const copy = t('picker')
 
   const [type, setType] = useState<BoardTypeId>(() => layout.placements[0]?.board ?? 'mini52')
@@ -54,10 +56,13 @@ export default function BoardPicker() {
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
 
-  /** 退出选板：draft 改了又不确认 = 丢掉这次排板，先问一声 */
+  /** 退出选板：draft 改了又不确认 = 丢掉这次排板，先问一声。
+   *  新建作品的第一次选板取消要回作品库，不能从这儿绕过确认直接进编辑器 */
   const leave = () => {
     if (dirty && !window.confirm(copy.discard)) return
+    const backToLibrary = pickerReturn === 'library'
     closePicker()
+    if (backToLibrary) navigate('library')
   }
 
   useEffect(() => {
@@ -189,6 +194,16 @@ export default function BoardPicker() {
       setError(copy.needOne)
       return
     }
+    let next: BoardGeometry
+    try {
+      next = deriveLayoutGeometry({ placements: draft, gapMm: layout.gapMm })
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : copy.needOne)
+      return
+    }
+    // 新板阵盖不住已有内容时先把代价说出来，别让用户点完才发现少了东西
+    const lost = lostIfApplied(next)
+    if (lost > 0 && !window.confirm(copy.losesContent(lost))) return
     const failure = applyLayout({ placements: draft, gapMm: layout.gapMm })
     if (failure) setError(failure)
   }
@@ -409,18 +424,27 @@ export default function BoardPicker() {
       </div>
 
       {/* 右：尺寸 */}
-      <aside className="flex w-56 shrink-0 flex-col gap-3 overflow-y-auto border-l border-neutral-200 bg-white p-3 text-xs">
+      <aside className="flex w-48 shrink-0 flex-col gap-3 overflow-y-auto border-l border-neutral-200 bg-white p-3 text-xs">
         <div className="flex flex-col gap-1">
-          <h3 className="text-[11px] font-semibold tracking-wide text-neutral-500">{copy.info}</h3>
+          <h3 className="text-[11px] font-semibold tracking-wide text-neutral-500">
+            {copy.summary}
+          </h3>
           <Row label={copy.boardCount} value={`${draft.length}`} />
           <Row label={copy.gridSize} value={geometry ? `${geometry.cols} × ${geometry.rows}` : '—'} />
           <Row
             label={copy.physical}
             value={geometry ? `${sizeMm.w.toFixed(1)} × ${sizeMm.h.toFixed(1)} mm` : '—'}
           />
-          <Row label={copy.totalCells} value={geometry ? geometry.cols * geometry.rows : 0} />
-          <Row label={copy.usableCells} value={filledCells} />
           {holes > 0 && <Row label={copy.holes} value={holes} warn />}
+          <details className="mt-1">
+            <summary className="cursor-pointer text-[11px] text-neutral-500">
+              {copy.details}
+            </summary>
+            <div className="mt-1 flex flex-col gap-1">
+              <Row label={copy.totalCells} value={geometry ? geometry.cols * geometry.rows : 0} />
+              <Row label={copy.usableCells} value={filledCells} />
+            </div>
+          </details>
         </div>
 
         {error && (
@@ -442,30 +466,9 @@ export default function BoardPicker() {
           onClick={leave}
           className="rounded border border-neutral-300 px-3 py-2 text-sm"
         >
-          {copy.cancelPick}
+          {pickerReturn === 'library' ? copy.cancelToLibrary : copy.cancelPick}
         </button>
         <p className="text-[11px] leading-relaxed text-neutral-500">{copy.confirmHint}</p>
-
-        <div className="mt-auto flex flex-col gap-1 border-t border-neutral-200 pt-2">
-          <h3 className="text-[11px] font-semibold tracking-wide text-neutral-500">{copy.bench}</h3>
-          {[
-            { id: 'stress-26-44', label: '130 万格（44×44 个 26）' },
-            { id: 'stress-26-86', label: '500 万格（86×86 个 26）' },
-          ].map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              className="rounded border border-neutral-300 px-2 py-1 text-left"
-              onClick={() => {
-                const failure = applyPreset(b.id)
-                if (failure) setError(failure)
-                else setNotice(null)
-              }}
-            >
-              {b.label}
-            </button>
-          ))}
-        </div>
       </aside>
     </div>
   )
@@ -476,6 +479,9 @@ function samePlacements(a: BoardPlacement[], b: BoardPlacement[]): boolean {
   if (a.length !== b.length) return false
   return a.every((p, i) => p.board === b[i].board && p.col === b[i].col && p.row === b[i].row)
 }
+
+/** 新板阵盖不住的非空格子数：applyLayout 换板时会丢的就是这些 */
+const lostIfApplied = (next: BoardGeometry) => lostCells(useEditor.getState().grid, next)
 
 function Row({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
   return (

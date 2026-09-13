@@ -22,35 +22,37 @@ const TABS = [
 export default function App() {
   const route = useRoute()
   const Page = { library: Library, editor: Editor, follow: Follow }[route]
+  // 编辑器自带一行表头（菜单就在里面），上面再叠一层导航就是两行头
+  const chrome = route !== 'editor'
 
   return (
     <ErrorBoundary>
       <div className="flex h-full flex-col bg-neutral-50 text-neutral-900">
-      <header className="flex items-center gap-6 border-b border-neutral-200 bg-white px-5 py-3">
-        <h1 className="text-sm font-semibold">{t('appName')}</h1>
-        <nav className="flex gap-1">
-          {TABS.map((tab) => (
-            <button
-              key={tab.route}
-              onClick={() => navigate(tab.route)}
-              className={`rounded px-3 py-1 text-sm ${
-                route === tab.route
-                  ? 'bg-neutral-900 text-white'
-                  : 'text-neutral-600 hover:bg-neutral-100'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </header>
-      <main className="min-h-0 flex-1">
-        <Suspense
-          fallback={<p className="p-6 text-sm text-neutral-500">{t('loading')}</p>}
-        >
-          <Page />
-        </Suspense>
-      </main>
+        {chrome && (
+          <header className="flex items-center gap-6 border-b border-neutral-200 bg-white px-5 py-3">
+            <h1 className="text-sm font-semibold">{t('appName')}</h1>
+            <nav className="flex gap-1">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.route}
+                  onClick={() => navigate(tab.route)}
+                  className={`rounded px-3 py-1 text-sm ${
+                    route === tab.route
+                      ? 'bg-neutral-900 text-white'
+                      : 'text-neutral-600 hover:bg-neutral-100'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          </header>
+        )}
+        <main className="min-h-0 flex-1">
+          <Suspense fallback={<p className="p-6 text-sm text-neutral-500">{t('loading')}</p>}>
+            <Page />
+          </Suspense>
+        </main>
       </div>
     </ErrorBoundary>
   )

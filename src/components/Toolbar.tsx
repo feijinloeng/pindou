@@ -1,46 +1,156 @@
 import { layoutSizeMm } from '../domain/board'
 import { t } from '../i18n/zh'
-import { useEditor, type ToolId } from '../editor/store'
-import { clampZoom, snapZoom } from '../render/canvasViewport'
-import { Btn } from './ui'
+import { useEditor } from '../editor/store'
+import { navigate } from '../router'
+import { Dropdown, MenuItem, PrimaryBtn } from './ui'
 
-const TOOLS: Array<{ id: ToolId; label: string; hint: string; key: string }> = [
-  { id: 'select', label: t('editor').tools.select, hint: '点一格改成当前色号', key: 'V' },
-  { id: 'pencil', label: t('editor').tools.pencil, hint: '拖拽连续落色', key: 'B' },
-  { id: 'eraser', label: t('editor').tools.eraser, hint: '把格子设回空格', key: 'E' },
-  { id: 'picker', label: t('editor').tools.picker, hint: '吸取某格色号', key: 'I' },
-  { id: 'bucket', label: t('editor').tools.bucket, hint: '4 邻域同色连通块填充', key: 'G' },
-  { id: 'rect', label: t('editor').tools.rect, hint: '拖框选区，Shift 追加', key: 'M' },
-]
-
+/**
+ * 一行表头：菜单 / 作品名 / 当前阶段 / 保存状态 / 主操作。
+ * 板阵尺寸、缩放、客户信息这些都不常驻 —— 各自只有一个家在菜单和画布边上。
+ */
 export default function Toolbar() {
-  const tool = useEditor((s) => s.tool)
-  const setTool = useEditor((s) => s.setTool)
-  const vp = useEditor((s) => s.vp)
-  const setVp = useEditor((s) => s.setVp)
-  const showCodes = useEditor((s) => s.showCodes)
-  const setShowCodes = useEditor((s) => s.setShowCodes)
-  const canUndo = useEditor((s) => s.canUndo)
-  const canRedo = useEditor((s) => s.canRedo)
-  const undo = useEditor((s) => s.undo)
-  const redo = useEditor((s) => s.redo)
-  const geom = useEditor((s) => s.geom)
-  const layout = useEditor((s) => s.layout)
-  const pickerOpen = useEditor((s) => s.pickerOpen)
-  const openPicker = useEditor((s) => s.openPicker)
-  const savedAt = useEditor((s) => s.savedAt)
-  const saving = useEditor((s) => s.saving)
-  const saveError = useEditor((s) => s.saveError)
-  const saveNow = useEditor((s) => s.saveNow)
   const name = useEditor((s) => s.name)
   const setName = useEditor((s) => s.setName)
   const customer = useEditor((s) => s.customer)
   const setCustomer = useEditor((s) => s.setCustomer)
-  const panelsOpen = useEditor((s) => s.panelsOpen)
-  const togglePanels = useEditor((s) => s.togglePanels)
+  const pickerOpen = useEditor((s) => s.pickerOpen)
+  const stage = useEditor((s) => s.stage)
+  const savedAt = useEditor((s) => s.savedAt)
+  const saving = useEditor((s) => s.saving)
+  const saveError = useEditor((s) => s.saveError)
+  const saveNow = useEditor((s) => s.saveNow)
+  const openExport = useEditor((s) => s.openExport)
+  const openPicker = useEditor((s) => s.openPicker)
+  const openPanel = useEditor((s) => s.openPanel)
+  const showCodes = useEditor((s) => s.showCodes)
+  const setShowCodes = useEditor((s) => s.setShowCodes)
+  const savedCommitVersion = useEditor((s) => s.savedCommitVersion)
+  const commitVersion = useEditor((s) => s.commitVersion)
+  const geom = useEditor((s) => s.geom)
+  const layout = useEditor((s) => s.layout)
+  const copy = t('editor')
+  const size = layoutSizeMm(geom)
+
+  // 保存门：保存成功后内容一变（commitVersion 变了）就重新关上
+  const gateOpen = savedCommitVersion !== null && savedCommitVersion === commitVersion
+
+  /** 整图操作：先清选区，镜像 / 旋转才是整张图的意思 */
+  const whole = (run: (state: ReturnType<typeof useEditor.getState>) => void) => {
+    const state = useEditor.getState()
+    state.clearSel()
+    run(state)
+  }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-neutral-200 bg-white px-3 py-2">
+    <div className="flex items-center gap-2 border-b border-neutral-200 bg-white px-2 py-1.5">
+      <Dropdown label={copy.menu} title="项目菜单和整图操作" width="w-72">
+        {(close) => (
+          <>
+            <p className="px-2 pt-1 text-[11px] font-semibold tracking-wide text-neutral-500">
+              {copy.menuProject}
+            </p>
+            <label className="flex flex-col gap-1 px-2 pb-1 text-xs text-neutral-600">
+              {copy.customer}
+              <input
+                className="rounded border border-neutral-300 px-2 py-1 text-xs"
+                value={customer ?? ''}
+                placeholder={copy.customerPlaceholder}
+                onChange={(e) => setCustomer(e.target.value.trim() ? e.target.value : null)}
+              />
+            </label>
+            <p className="px-2 pb-1 text-[11px] leading-relaxed text-neutral-500">
+              {layout.placements.length} 块板 · {geom.cols}×{geom.rows} 格 ·{' '}
+              {size.w.toFixed(0)}×{size.h.toFixed(0)}mm
+            </p>
+            <MenuItem
+              onClick={() => {
+                openPicker('edit')
+                close()
+              }}
+            >
+              {copy.adjustBoards}
+            </MenuItem>
+
+            <p className="mt-1 px-2 pt-1 text-[11px] font-semibold tracking-wide text-neutral-500">
+              {copy.imageMenu}
+            </p>
+            <MenuItem
+              onClick={() => {
+                openPanel('image')
+                close()
+              }}
+            >
+              {copy.importImage}
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                whole((s) => s.rotate(1))
+                close()
+              }}
+            >
+              {copy.rotateWholeCw}
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                whole((s) => s.rotate(-1))
+                close()
+              }}
+            >
+              {copy.rotateWholeCcw}
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                whole((s) => s.mirror('h'))
+                close()
+              }}
+            >
+              {copy.mirrorWholeH}
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                whole((s) => s.mirror('v'))
+                close()
+              }}
+            >
+              {copy.mirrorWholeV}
+            </MenuItem>
+            <p className="px-2 pt-1 text-[11px] text-neutral-500">{copy.moveWhole}</p>
+            <div className="flex gap-1 px-2 pb-1">
+              {(
+                [
+                  ['←', -1, 0],
+                  ['→', 1, 0],
+                  ['↑', 0, -1],
+                  ['↓', 0, 1],
+                ] as const
+              ).map(([arrow, dc, dr]) => (
+                <button
+                  key={arrow}
+                  type="button"
+                  aria-label={`${copy.moveWhole} ${arrow}`}
+                  className="h-7 w-7 rounded border border-neutral-300 text-xs hover:bg-neutral-100"
+                  onClick={() => whole((s) => s.translate(dc, dr))}
+                >
+                  {arrow}
+                </button>
+              ))}
+            </div>
+
+            <MenuItem onClick={() => setShowCodes(!showCodes)}>
+              {showCodes ? `✓ ${copy.showCodes}` : copy.showCodes}
+            </MenuItem>
+
+            <div className="my-1 h-px bg-neutral-200" />
+            <MenuItem onClick={() => navigate('library')}>{t('nav').library}</MenuItem>
+            <MenuItem onClick={() => navigate('follow')}>{t('nav').follow}</MenuItem>
+            <details className="px-2 py-1 text-[11px] leading-relaxed text-neutral-500">
+              <summary className="cursor-pointer">{copy.shortcuts}</summary>
+              <p className="mt-1">{copy.shortcutsBody}</p>
+            </details>
+          </>
+        )}
+      </Dropdown>
+
       <input
         className="w-40 rounded border border-neutral-300 px-2 py-1 text-xs"
         value={name}
@@ -48,95 +158,45 @@ export default function Toolbar() {
         aria-label={t('library').namePlaceholder}
         onChange={(e) => setName(e.target.value)}
       />
-      <input
-        className="w-40 rounded border border-neutral-300 px-2 py-1 text-xs"
-        value={customer ?? ''}
-        placeholder={t('editor').customerPlaceholder}
-        aria-label={t('editor').customer}
-        onChange={(e) => setCustomer(e.target.value.trim() ? e.target.value : null)}
-      />
-      <Btn active={pickerOpen} onClick={openPicker} title="重新拼台面（会保留重叠位置上的内容）">
-        {t('editor').chooseBoard}
-      </Btn>
-      <span className="text-xs text-neutral-500 tabular-nums">
-        {layout.placements.length} 块 · {geom.cols}×{geom.rows} ·{' '}
-        {layoutSizeMm(geom).w.toFixed(0)}×{layoutSizeMm(geom).h.toFixed(0)}mm
+
+      <span className="rounded bg-neutral-100 px-2 py-1 text-[11px] text-neutral-500">
+        {pickerOpen ? copy.stagePick : stage === 'export' ? copy.stageExport : copy.stageEdit}
       </span>
 
-      <div className="flex gap-1">
-        {TOOLS.map((toolDef) => (
-          <Btn
-            key={toolDef.id}
-            active={tool === toolDef.id}
-            title={`${toolDef.hint}（快捷键 ${toolDef.key}）`}
-            onClick={() => setTool(toolDef.id)}
-          >
-            {toolDef.label}
-          </Btn>
-        ))}
+      <div className="ml-auto flex items-center gap-2">
+        <span
+          aria-live="polite"
+          className={`text-xs tabular-nums ${saveError ? 'text-red-600' : 'text-neutral-500'}`}
+        >
+          {saving
+            ? copy.saving
+            : saveError
+              ? copy.saveRetry
+              : gateOpen && savedAt
+                ? `${copy.savedAt} ${savedTime(savedAt)}`
+                : savedAt
+                  ? `${copy.autoSaved} ${savedTime(savedAt)}·${copy.needSave}`
+                  : copy.unsaved}
+        </span>
+        {stage === 'edit' && !pickerOpen && gateOpen && (
+          <PrimaryBtn onClick={openExport} title="内容已保存，可以导出了">
+            {copy.nextExport}
+          </PrimaryBtn>
+        )}
+        <button
+          type="button"
+          onClick={() => void saveNow(true)}
+          disabled={saving}
+          title={copy.saveHint}
+          className={`rounded border px-2 py-1 text-xs whitespace-nowrap transition disabled:cursor-not-allowed disabled:opacity-40 ${
+            gateOpen
+              ? 'border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100'
+              : 'border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-800'
+          }`}
+        >
+          {copy.save}
+        </button>
       </div>
-
-      <div className="flex gap-1">
-        <Btn disabled={!canUndo} onClick={undo} title="Cmd/Ctrl+Z">
-          {t('editor').undo}
-        </Btn>
-        <Btn disabled={!canRedo} onClick={redo} title="Shift+Cmd/Ctrl+Z">
-          {t('editor').redo}
-        </Btn>
-      </div>
-
-      <Btn active={showCodes} onClick={() => setShowCodes(!showCodes)}>
-        {t('editor').showCodes}
-      </Btn>
-
-      <button
-        type="button"
-        onClick={togglePanels}
-        aria-pressed={panelsOpen}
-        title={t('editor').panelsHint}
-        className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100"
-      >
-        {panelsOpen ? t('editor').panelsHide : t('editor').panelsShow}
-      </button>
-
-      <span
-        aria-live="polite"
-        className={`ml-auto text-xs tabular-nums ${saveError ? 'text-red-600' : 'text-neutral-500'}`}
-      >
-        {saving
-          ? t('editor').saving
-          : saveError
-            ? t('editor').saveRetry
-            : savedAt
-              ? `${t('editor').savedAt} ${savedTime(savedAt)}`
-              : t('editor').save}
-      </span>
-      <button
-        type="button"
-        onClick={() => void saveNow()}
-        disabled={saving}
-        title={t('editor').saveHint}
-        className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-40"
-      >
-        {t('editor').save}
-      </button>
-
-      <label className="flex items-center gap-2 text-xs text-neutral-600">
-        {t('editor').zoom}
-        <input
-          type="range"
-          min={-6}
-          max={30}
-          step={0.1}
-          value={Math.log2(vp.zoom)}
-          onChange={(e) => {
-            const z = clampZoom(snapZoom(Math.pow(2, Number(e.target.value))))
-            setVp({ ...vp, zoom: z })
-          }}
-          className="w-40"
-        />
-        <span className="w-12 tabular-nums">{Math.round(vp.zoom * 100)}%</span>
-      </label>
     </div>
   )
 }

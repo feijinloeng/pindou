@@ -26,16 +26,6 @@ export const BOARD_PRESETS: Array<{ id: string; label: string; array: BoardArray
       gapMm: 0,
     },
   },
-  {
-    id: 'stress-26-86',
-    label: '压测：86×86 个 26 板（2236×2236 = 500 万格）',
-    array: fill(86, 86, 'mini26'),
-  },
-  {
-    id: 'stress-26-44',
-    label: '压测：44×44 个 26 板（1144×1144 = 131 万格）',
-    array: fill(44, 44, 'mini26'),
-  },
 ]
 
 export interface BoardProfile {
