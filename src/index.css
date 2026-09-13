@@ -57,15 +57,40 @@
 }
 
 html,
-body,
-#root {
+body {
   height: 100%;
   margin: 0;
 }
 
+/* CSS zoom 会参与布局，比 transform 更接近浏览器缩放。 */
+#root {
+  height: 100%;
+  /* 设计尺寸按原页面的 85% 定义，不使用 zoom，避免 Canvas 坐标漂移。 */
+  --spacing: 0.2125rem;
+  --container-md: 23.8rem;
+  --container-2xl: 35.7rem;
+  --container-6xl: 61.2rem;
+  --text-xs: 0.6375rem;
+  --text-sm: 0.74375rem;
+  --text-base: 0.85rem;
+  --radius-sm: 0.2125rem;
+  --radius-md: 0.31875rem;
+  --radius-lg: 0.425rem;
+  --radius-xl: 0.6375rem;
+}
+
+body {
+  overflow: hidden;
+}
+
+.brand-title {
+  font-family: 'Songti SC', 'STSong', 'Noto Serif CJK SC', 'Source Han Serif SC', serif;
+  letter-spacing: 0.08em;
+}
+
 body {
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 11.9px;
   line-height: 1.5;
   background: var(--workspace);
   color: var(--ink);

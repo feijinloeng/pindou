@@ -7,16 +7,15 @@ import { startAutosave } from './autosave'
 
 /**
  * 工程 session 的唯一拥有者（spec 13）：
- *  - 进编辑器/跟做：没有加载过工程就恢复上次的草稿，再捡缓存的源图
- *  - 编辑器和跟做之间切换：订阅不断，跟做进度照样自动落盘
+ *  - 进编辑器：没有加载过工程就恢复上次的草稿，再捡缓存的源图
  *  - 回作品库：先把挂起的保存冲掉，再退订，后台不再写工程
  *  - 换工程：清掉会话级的界面状态（面板查询、专注模式）
  *
- * 全应用只挂这一个实例 —— 以前 Editor 自己挂 autosave，切到跟做页订阅就断了。
+ * 全应用只挂这一个实例 —— Editor 不自己挂 autosave，避免离开页面时订阅管理分散。
  */
 export default function ProjectSession() {
   const route = useRoute()
-  const inProject = route !== 'library'
+  const inProject = route === 'editor'
 
   useEffect(() => {
     if (!inProject) return

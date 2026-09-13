@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { shouldHandleCanvasKey } from '../editor/keyboard'
-import { escapeTopmost, hasOverlay } from '../components/overlayState'
+import { escapeTopmost, hasOverlay, Z } from '../components/overlayState'
 
 import BoardPicker from './BoardPicker'
 import CanvasStage from '../components/CanvasStage'
@@ -9,11 +9,8 @@ import ExportStage from '../components/ExportStage'
 import NoticeHost from '../components/NoticeHost'
 import PanelHost from '../components/PanelHost'
 import SelectionBar from '../components/SelectionBar'
-import ToolDock from '../components/ToolRail'
 import Toolbar from '../components/Toolbar'
-import WorkspaceControls from '../components/WorkspaceControls'
 import { useEditor, type ToolId } from '../editor/store'
-import { useUi } from '../editor/uiState'
 import { gsap, MOTION, reducedMotion, useGSAP } from '../motion'
 
 const TOOL_KEYS: Record<string, ToolId> = {
@@ -28,7 +25,6 @@ const TOOL_KEYS: Record<string, ToolId> = {
 export default function Editor() {
   const pickerOpen = useEditor((s) => s.pickerOpen)
   const stage = useEditor((s) => s.stage)
-  const focusMode = useUi((s) => s.focusMode)
   const editing = !pickerOpen && stage === 'edit'
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -50,11 +46,10 @@ export default function Editor() {
       if ((s.pickerOpen || s.stage === 'export') && e.key !== 'Escape') return
       const mod = e.metaKey || e.ctrlKey
       if (e.key === 'Escape') {
-        // 一次只退一层：浮层栈顶 → 面板 → 选区 → 专注模式
+        // 一次只退一层：浮层栈顶 → 面板 → 选区
         if (escapeTopmost()) return
         if (s.panel) s.openPanel(null)
         else if (s.selection.length) s.clearSel()
-        else if (useUi.getState().focusMode) useUi.getState().setFocusMode(false)
         return
       }
       // 菜单/对话框开着的时候，字母键是浮层的，不是画布的
@@ -93,15 +88,16 @@ export default function Editor() {
   }, [])
 
   return (
-    <div ref={rootRef} className="flex h-full flex-col bg-workspace text-ink">
-      {/* 专注模式：头部高度保留（不跳布局），内容淡出融进工作区 */}
+    <div ref={rootRef} className="relative h-full overflow-hidden bg-workspace text-ink">
+      {/* Excalidraw 式浮层头部：不占画布高度。 */}
       <div
-        className={`editor-header shrink-0 transition-opacity ${focusMode ? 'pointer-events-none opacity-0' : ''}`}
+        style={{ zIndex: Z.menu }}
+        className="editor-header pointer-events-none absolute inset-0"
       >
         <Toolbar />
       </div>
 
-      <div className="relative min-h-0 flex-1">
+      <div className="relative h-full min-h-0">
         {/* 画布常驻：导出/选板只是盖在它上面，回来视口、工具、选区都还是原来那一眼 */}
         <div
           className={`canvas-layer absolute inset-0 ${editing ? '' : 'pointer-events-none invisible'}`}
@@ -120,10 +116,8 @@ export default function Editor() {
           </div>
         ) : (
           <>
-            <WorkspaceControls />
-            {!focusMode && <SelectionBar />}
-            {!focusMode && <PanelHost />}
-            <ToolDock />
+            <SelectionBar />
+            <PanelHost />
           </>
         )}
 

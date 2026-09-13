@@ -88,7 +88,7 @@ function ColorBrowse() {
         <div className="flex flex-col gap-2 px-3 py-2">
           <div className="relative">
             <MagnifyingGlass
-              size={14}
+              size={12}
               aria-hidden
               className="absolute top-1/2 left-2 -translate-y-1/2 text-ink-2"
             />
@@ -107,7 +107,7 @@ function ColorBrowse() {
                 onClick={() => setQuery('')}
                 className="absolute top-1/2 right-1.5 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-ink-2 hover:bg-hover"
               >
-                <X size={12} aria-hidden />
+                <X size={10} aria-hidden />
               </button>
             )}
           </div>
@@ -155,7 +155,7 @@ function ColorBrowse() {
           onClick={() => setSettingsOpen(true)}
           className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm text-ink hover:bg-hover"
         >
-          <GearSix size={16} aria-hidden />
+          <GearSix size={14} aria-hidden />
           {copy.colorLibrary}
         </button>
       </footer>
@@ -195,7 +195,7 @@ function ColorSettings() {
             onClick={() => setSettingsOpen(false)}
             className="flex items-center gap-1 self-start text-sm text-ink-2 hover:text-ink"
           >
-            <ArrowLeft size={14} aria-hidden />
+            <ArrowLeft size={12} aria-hidden />
             {copy.colorBack}
           </button>
 
@@ -262,7 +262,7 @@ function ColorSettings() {
             />
           )}
 
-          <p className="text-[11px] leading-relaxed text-ink-2/80">
+          <p className="text-[9.35px] leading-relaxed text-ink-2/80">
             {DISCLAIMER || t('disclaimer')}
             <br />
             {TRADEMARKS || t('trademarks')}
@@ -311,7 +311,7 @@ function SwatchGrid({
                 if (managing) onToggle?.(color.code)
                 else onPick?.(i)
               }}
-              className={`flex h-11 w-full items-center justify-center rounded-lg border text-[10px] ${
+              className={`flex h-11 w-full items-center justify-center rounded-lg border text-[8.5px] ${
                 excluded
                   ? 'border-dashed border-line opacity-40'
                   : selected
@@ -327,7 +327,7 @@ function SwatchGrid({
               </span>
               {selected && !managing && (
                 <Check
-                  size={12}
+                  size={10}
                   weight="bold"
                   aria-hidden
                   className={`absolute right-0.5 bottom-0.5 ${
@@ -339,7 +339,7 @@ function SwatchGrid({
             {managing && (
               <span
                 aria-hidden
-                className={`pointer-events-none absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none ${
+                className={`pointer-events-none absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-[8.5px] leading-none ${
                   excluded ? 'bg-line text-ink' : 'bg-ink text-surface'
                 }`}
               >

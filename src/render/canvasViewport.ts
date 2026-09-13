@@ -94,7 +94,7 @@ export function panBy(vp: Viewport, dx: number, dy: number): Viewport {
 }
 
 /** 编辑器首次铺满的安全边距：给左上启动器和底部 dock 留位，别盖住最外圈可编辑格 */
-export const EDITOR_FIT_PAD = { top: 72, right: 24, bottom: 96, left: 24 } as const
+export const EDITOR_FIT_PAD = { top: 61.2, right: 20.4, bottom: 81.6, left: 20.4 } as const
 
 /** 让整张图居中铺满，留 pad 像素边距（可以是四边不同的对象） */
 export function fitViewport(
@@ -138,36 +138,4 @@ export function clampViewport(
     panX: Math.min(Math.max(vp.panX, minX), canvasW - slack),
     panY: Math.min(Math.max(vp.panY, minY), canvasH - slack),
   }
-}
-
-/**
- * 把视口对到某个区域上（跟做模式的"推荐下一个区域"）。
- * 两边都要能调：当前缩放太大就缩下来（否则推荐了也看不全），太小就放大。
- * 最后过一遍 clampViewport，目标不会跑出画布外。
- */
-export function fitViewportToRegion(
-  vp: Viewport,
-  bbox: { c0: number; r0: number; c1: number; r1: number },
-  canvasW: number,
-  canvasH: number,
-  cols: number,
-  rows: number,
-  padCells = 25,
-): Viewport {
-  if (!canvasW || !canvasH) return vp
-  const spanCols = Math.max(8, bbox.c1 - bbox.c0 + padCells)
-  const spanRows = Math.max(8, bbox.r1 - bbox.r0 + padCells)
-  const zoom = clampZoom(Math.min(canvasW / spanCols, canvasH / spanRows))
-  return clampViewport(
-    {
-      ...vp,
-      zoom,
-      panX: canvasW / 2 - ((bbox.c0 + bbox.c1) / 2) * zoom,
-      panY: canvasH / 2 - ((bbox.r0 + bbox.r1) / 2) * zoom,
-    },
-    cols,
-    rows,
-    canvasW,
-    canvasH,
-  )
 }

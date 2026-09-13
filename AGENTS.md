@@ -10,7 +10,6 @@ Users can:
 - draw and edit a bead grid on a Canvas 2D workspace;
 - convert an image to a palette-limited bead pattern;
 - manage colors, selections, whole-pattern transforms, local projects, and exports;
-- enter Follow mode to complete a real pattern by color and connected region.
 
 Project data is stored in the visitor's browser (IndexedDB). Do not introduce a server dependency unless explicitly requested.
 
@@ -23,13 +22,12 @@ Completed:
 - Semantic light/dark/system theme tokens, reduced-motion preference, shared UI primitives, overlay/Escape stack, notices, and GSAP motion helpers.
 - Editor redesign: document header, bottom tool dock, temporary panels, persistent canvas across board-picker/export states, focus mode, and project session autosave.
 - Board picker redesign: model sidebar, drag/drop/snap layout workspace, geometry validation, dirty guard, lost-cell confirmation, keyboard movement, and mobile layout.
-- Library, export, color, conversion, selection, transform, and Follow-mode layouts were redesigned without replacing existing editing, conversion, storage, or export algorithms.
+- Library, export, color, conversion, selection, and transform layouts were redesigned without replacing existing editing, conversion, storage, or export algorithms.
 - Production build, typecheck, lint, and grid-loss checks pass. The current version was deployed on 2026-09-13.
 
 Still to verify or finish:
 
 1. Manual browser acceptance on desktop and mobile, including screenshots and reduced-motion/Escape flows.
-2. Follow mode's recommended-region camera is currently an immediate reposition; replace it with a cancellable GSAP viewport tween only after preserving direct user pan/zoom behavior.
 
 ## Important rules for future agents
 
@@ -44,16 +42,15 @@ Still to verify or finish:
 
 ## Architecture map
 
-- `src/App.tsx` — hash-route shell (`#/library`, `#/editor`, `#/follow`), library-only app chrome, route transition, session owner.
+- `src/App.tsx` — hash-route shell (`#/library`, `#/editor`), library-only app chrome, route transition, session owner.
 - `src/pages/Library.tsx` — project library and recoverable-trash workflow.
 - `src/pages/Editor.tsx` — editor state switch: drawing canvas, board picker, or export stage; canvas remains mounted when temporarily hidden.
 - `src/pages/BoardPicker.tsx` — physical board layout editing. `src/pages/pickerActions.ts` bridges its header actions.
-- `src/pages/Follow.tsx` — color/connected-region assembly workflow.
 - `src/components/` — canvas, toolbar, tool dock, workspace controls, panels, export, notices, modal/popover primitives, and overlay state.
 - `src/editor/store.ts` — Zustand editing state and actions. `src/editor/uiState.ts` stores UI preferences/session state.
-- `src/storage/ProjectSession.tsx` — editor/follow autosave lifecycle. `src/storage/` holds browser persistence.
+- `src/storage/ProjectSession.tsx` — editor autosave lifecycle. `src/storage/` holds browser persistence.
 - `src/render/` — Canvas 2D drawing, viewport, board seams, and bitmap cache.
-- `src/domain/` and `src/follow/` — board/grid domain logic and Follow-region algorithms.
+- `src/domain/` — board/grid domain logic.
 - `src/motion.ts` — GSAP tokens, reduced-motion gate, generic animation and presence lifecycle helpers.
 - `deploy/` — Nginx configuration and production deployment script.
 
@@ -75,7 +72,7 @@ Before changing UI behavior, trace the affected Zustand action and all its calle
 ## Production deployment
 
 - **Public site:** https://pindou.liangfeiyan.cn
-- **Routes:** `#/library`, `#/editor`, `#/follow` (hash routes; no server rewrite logic is required for them).
+- **Routes:** `#/library`, `#/editor` (hash routes; no server rewrite logic is required for them).
 - **Hosting:** Ubuntu server `82.156.156.239`, served by Nginx from `/var/www/pindou`.
 - **Nginx config template:** `deploy/nginx-pindou.conf`.
 - **TLS:** Let's Encrypt. The domain's CAA record allows `letsencrypt.org`; do not change certificate authority without reviewing that DNS rule.

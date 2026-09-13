@@ -25,12 +25,7 @@ export interface DrawPatternOptions {
   /** 板没盖到的格子（自由拼板的外接框空档），画成"没有板"的样子 */
   placeable?: Uint8Array | null
   bitmap?: GridBitmap | null
-  /**
-   * 跟做模式：只高亮某一个色号，其余变淡（不是隐藏）。
-   * completed 里标 1 的格子是已经拼完的，也画淡。
-   */
-  focus?: { colorIndex: number | null; completed?: Uint8Array | null } | null
-  /** 屏幕上的板框颜色：默认共享常量；编辑器/跟做传中性色，导出文档不受影响 */
+  /** 屏幕上的板框颜色：默认共享常量；编辑器传中性色，导出文档不受影响 */
   seamColor?: string
 }
 
@@ -120,25 +115,11 @@ function drawCells(
 ): void {
   const { grid, palette } = o
   const hexes = palette.colors.map((c) => c.hex)
-  const focus = o.focus ?? null
   let lastFill = ''
-  let alpha = 1
   for (let r = r0; r < r1; r++) {
     for (let c = c0; c < c1; c++) {
       const v = cellValue(o, r * grid.cols + c, pending)
       if (v === EMPTY) continue
-      // 跟做模式：非焦点色和已完成的格子都画淡
-      const nextAlpha = !focus
-        ? 1
-        : focus.colorIndex !== null && v !== focus.colorIndex
-          ? 0.12
-          : focus.completed?.[r * grid.cols + c]
-            ? 0.25
-            : 1
-      if (nextAlpha !== alpha) {
-        ctx.globalAlpha = nextAlpha
-        alpha = nextAlpha
-      }
       const hex = hexes[v] ?? '#888888'
       if (hex !== lastFill) {
         ctx.fillStyle = hex
@@ -151,7 +132,6 @@ function drawCells(
       ctx.fillRect(x, y, x2 - x, y2 - y)
     }
   }
-  if (alpha !== 1) ctx.globalAlpha = 1
 }
 
 /** 位图路径下，进行中的笔画只有几个格子，单独补画 */

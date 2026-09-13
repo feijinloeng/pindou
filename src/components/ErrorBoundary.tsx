@@ -64,9 +64,9 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
             {copy.copyDiagnostics}
           </button>
         </div>
-        <p className="max-w-md text-[11px] text-neutral-500">{copy.draftHint}</p>
+        <p className="max-w-md text-[9.35px] text-neutral-500">{copy.draftHint}</p>
         {dev && (
-          <pre className="max-h-48 max-w-2xl overflow-auto rounded bg-neutral-100 p-2 text-left text-[11px] text-neutral-600">
+          <pre className="max-h-48 max-w-2xl overflow-auto rounded bg-neutral-100 p-2 text-left text-[9.35px] text-neutral-600">
             {error.message}
             {'\n'}
             {error.stack}

@@ -151,7 +151,7 @@ function printNotes(ctx: ExportContext): string {
     '  4. 每块板的用量见「用量.csv」，可用 Excel / 表格软件打开。',
     '',
     `色板：${ctx.palette.displayName}`,
-    `页面：屏幕版（跟做）与纸面版（1:1）都是矢量 PDF，放大不会糊。`,
+    `页面：屏幕版与纸面版（1:1）都是矢量 PDF，放大不会糊。`,
   ].join('\n')
 }
 

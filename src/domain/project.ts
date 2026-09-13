@@ -23,15 +23,6 @@ import { STRATEGIES } from '../conversion/strategies'
 /** 工程文件必须带 schemaVersion 和迁移函数（第 3.3 节） */
 export const PROJECT_SCHEMA_VERSION = 1
 
-export interface MakingProgress {
-  /** 整个色号都拼完的 */
-  completedCodes: string[]
-  /** 按色号记录"已完成的连通域编号"（编号由 deterministic 的扫描顺序给出） */
-  completedRegions: Record<string, number[]>
-  focusCode: string | null
-  startedAt: string | null
-}
-
 export interface ProjectView {
   zoom: number
   panX: number
@@ -54,7 +45,6 @@ export interface Project {
   allowedCodes: string[] | null
   grid: CellGrid
   conversion: ConversionSettings | null
-  making: MakingProgress
   view: ProjectView
 }
 
@@ -197,40 +187,6 @@ function readView(raw: unknown, notes: string[]): ProjectView {
   return { zoom: zoom > 0 ? zoom : 8, panX, panY, showCodes }
 }
 
-function cleanMaking(making: Partial<MakingProgress>): boolean {
-  return (
-    (making.completedCodes === undefined || Array.isArray(making.completedCodes)) &&
-    (making.completedRegions === undefined ||
-      (typeof making.completedRegions === 'object' && !Array.isArray(making.completedRegions))) &&
-    (making.focusCode === undefined || making.focusCode === null || typeof making.focusCode === 'string') &&
-    (making.startedAt === undefined || making.startedAt === null || isIsoDate(making.startedAt))
-  )
-}
-
-function readMaking(raw: unknown, notes: string[]): MakingProgress {
-  const making = (raw ?? {}) as Partial<MakingProgress>
-  const completedCodes = Array.isArray(making.completedCodes)
-    ? making.completedCodes.filter((code): code is string => typeof code === 'string')
-    : []
-  const completedRegions: Record<string, number[]> = {}
-  const source = making.completedRegions
-  if (source && typeof source === 'object' && !Array.isArray(source)) {
-    for (const [code, value] of Object.entries(source)) {
-      if (Array.isArray(value)) completedRegions[code] = value.filter((n) => Number.isInteger(n))
-    }
-  }
-  const dropped =
-    completedCodes.length !== (making.completedCodes?.length ?? 0) ||
-    Object.keys(completedRegions).length !== Object.keys(making.completedRegions ?? {}).length
-  if (!cleanMaking(making) || dropped) notes.push('跟做进度里有坏数据，已清理')
-  return {
-    completedCodes,
-    completedRegions,
-    focusCode: typeof making.focusCode === 'string' ? making.focusCode : null,
-    startedAt: isIsoDate(making.startedAt) ? making.startedAt : null,
-  }
-}
-
 /** 色号白名单：不存在的色号要剔除，否则 UI 上会出现“看得见却用不了”的色号 */
 function readAllowedCodes(raw: unknown, paletteId: string, notes: string[]): string[] | null {
   if (raw === null || raw === undefined) return null
@@ -291,7 +247,7 @@ export function parseProject(text: string, paletteSize?: number): ParseResult {
  * 工程对象的唯一入口校验。三条读路径共用：工程文件导入、IndexedDB 读取、复制。
  *
  * 结构性错误（版本 / 格数 / 解码 / 板阵 / 色板 id）直接拒绝；
- * 可修的字段（时间戳 / 视图 / 跟做进度 / 越界白名单 / 空档脏数据）就地修好，
+ * 可修的字段（时间戳 / 视图 / 越界白名单 / 空档脏数据）就地修好，
  * 并在 error.message 里说清楚改了什么。
  */
 export function validateProject(raw: unknown, paletteSize?: number): ParseResult {
@@ -465,7 +421,6 @@ export function validateProject(raw: unknown, paletteSize?: number): ParseResult
     allowedCodes: readAllowedCodes(stored.allowedCodes, paletteId, notes),
     grid: restored,
     conversion: readConversion(stored.conversion, notes),
-    making: readMaking(stored.making, notes),
     view: readView(stored.view, notes),
   }
 
@@ -515,7 +470,6 @@ export function createProject(options: {
     allowedCodes: null,
     grid: options.grid,
     conversion: options.conversion ?? null,
-    making: { completedCodes: [], completedRegions: {}, focusCode: null, startedAt: null },
     view: { zoom: 8, panX: 0, panY: 0, showCodes: true },
   }
 }

@@ -417,11 +417,3 @@ export function placementsSizeMm(
   }
   return { w: axisMm(xs, pitch, gapMm), h: axisMm(ys, pitch, gapMm) }
 }
-
-/** 板阵的物理尺寸（mm），用于界面上显示"拼出来多大" */
-export function layoutSizeMm(geom: BoardGeometry): { w: number; h: number } {
-  return {
-    w: axisMm(geom.boards.map((b) => ({ start: b.c0, size: b.cw })), geom.pitchMm, geom.gapMm),
-    h: axisMm(geom.boards.map((b) => ({ start: b.r0, size: b.rh })), geom.pitchMm, geom.gapMm),
-  }
-}

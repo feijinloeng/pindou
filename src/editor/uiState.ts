@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 
 /**
- * 纯界面状态：主题 / 动效偏好 / 专注模式 / 面板会话状态。
+ * 纯界面状态：主题 / 动效偏好 / 面板会话状态。
  * 不进工程文件（Project schema v1 不加字段），换工程只保留明确说是偏好的部分。
  *
  * 持久化只有 theme 和 motion 两项（localStorage，键 pindou.ui）；
- * 专注模式、面板查询这些是 session 数据，刷新即丢。
+ * 面板查询等会话数据刷新即丢。
  */
 
 export type ThemePref = 'system' | 'light' | 'dark'
@@ -15,10 +15,6 @@ export type ColorFilter = 'used' | 'all' | 'free'
 interface UiState {
   theme: ThemePref
   motion: MotionPref
-  /** 专注模式：藏起元数据和面板，只留画布、dock、缩放。session-only */
-  focusMode: boolean
-  /** 进专注模式前开着的面板，退出时原样恢复 */
-  panelBeforeFocus: string | null
   /** 色号面板的会话状态：同一次工程 session 里切面板不丢 */
   colorQuery: string
   colorFilter: ColorFilter | null
@@ -26,8 +22,6 @@ interface UiState {
 
   setTheme(theme: ThemePref): void
   setMotion(motion: MotionPref): void
-  setFocusMode(on: boolean): void
-  setPanelBeforeFocus(panel: string | null): void
   setColorQuery(query: string): void
   setColorFilter(filter: ColorFilter | null): void
   setColorSettingsOpen(open: boolean): void
@@ -64,8 +58,6 @@ const initialPrefs = typeof localStorage === 'undefined' ? { theme: 'system' as 
 export const useUi = create<UiState>((set, get) => ({
   theme: initialPrefs.theme,
   motion: initialPrefs.motion,
-  focusMode: false,
-  panelBeforeFocus: null,
   colorQuery: '',
   colorFilter: null,
   colorSettingsOpen: false,
@@ -78,12 +70,6 @@ export const useUi = create<UiState>((set, get) => ({
     savePrefs(get().theme, motion)
     set({ motion })
   },
-  setFocusMode(focusMode) {
-    set({ focusMode })
-  },
-  setPanelBeforeFocus(panelBeforeFocus) {
-    set({ panelBeforeFocus })
-  },
   setColorQuery(colorQuery) {
     set({ colorQuery })
   },
@@ -95,8 +81,6 @@ export const useUi = create<UiState>((set, get) => ({
   },
   resetSession() {
     set({
-      focusMode: false,
-      panelBeforeFocus: null,
       colorQuery: '',
       colorFilter: null,
       colorSettingsOpen: false,

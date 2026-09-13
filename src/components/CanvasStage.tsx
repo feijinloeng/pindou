@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { FrameCorners } from '@phosphor-icons/react'
-
 import { usedCells } from '../domain/grid'
 import { t } from '../i18n/zh'
 import { useEditor } from '../editor/store'
 import { shouldHandleCanvasKey } from '../editor/keyboard'
 import {
-  CODE_ZOOM,
   cellToScreen,
   clampViewport,
   panBy,
@@ -18,6 +15,7 @@ import {
 } from '../render/canvasViewport'
 import { BOARD_BG, drawCursorBox, drawPattern, fillCellRect } from '../render/drawPattern'
 import { GridBitmap } from '../render/gridBitmap'
+import ToolDock from './ToolRail'
 
 export default function CanvasStage() {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -355,44 +353,10 @@ export default function CanvasStage() {
           useEditor.getState().pointerUp()
         }}
       />
-      <div className="pointer-events-none absolute right-4 bottom-4 z-10 flex items-center gap-0.5 rounded-xl border border-line bg-surface p-1 shadow-sm">
-        <button
-          type="button"
-          aria-label={`${t('editor').zoom} −`}
-          title="缩小"
-          onClick={() => stepZoom(1 / 1.25)}
-          className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-lg text-ink hover:bg-hover"
-        >
-          −
-        </button>
-        {/* vp.zoom 就是每格多少 CSS 像素，直接显示它，别再编一个「100%」 */}
-        <span
-          className="pointer-events-auto px-1 text-xs text-ink-2 tabular"
-          title={
-            showCodes && vp.zoom < CODE_ZOOM ? t('editor').viewCodesZoomHint : undefined
-          }
-        >
-          {t('editor').pxPerCell(vp.zoom)}
-        </span>
-        <button
-          type="button"
-          aria-label={`${t('editor').zoom} ＋`}
-          title="放大"
-          onClick={() => stepZoom(1.25)}
-          className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-lg text-ink hover:bg-hover"
-        >
-          ＋
-        </button>
-        <button
-          type="button"
-          onClick={() => fitTo(size.width, size.height, dpr)}
-          aria-label={t('editor').fitCanvas}
-          title={t('editor').fitCanvasHint}
-          className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-lg text-ink hover:bg-hover"
-        >
-          <FrameCorners size={18} aria-hidden />
-        </button>
-      </div>
+      <ToolDock
+        onZoom={stepZoom}
+        onFit={() => fitTo(size.width, size.height, dpr)}
+      />
       <div className="pointer-events-none absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
         {empty && !promptDismissed && (
           <div className="pointer-events-auto flex w-60 flex-col gap-2 rounded-xl border border-line bg-surface p-4 text-center shadow-lg">

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 
 /**
- * 三个页面，用 hash 路由。纯静态工具不需要 router 依赖，静态托管也直接能跑。
+ * 两个页面，用 hash 路由。纯静态工具不需要 router 依赖，静态托管也直接能跑。
  * 形如 `#/editor`。
  */
-export type Route = 'library' | 'editor' | 'follow'
+export type Route = 'library' | 'editor'
 
-const ROUTES: Route[] = ['library', 'editor', 'follow']
+const ROUTES: Route[] = ['library', 'editor']
 
 export function parseHash(hash: string): Route {
   const name = hash.replace(/^#\/?/, '').split('?')[0]

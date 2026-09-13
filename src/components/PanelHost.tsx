@@ -71,7 +71,7 @@ export default function PanelHost() {
       ref={ref}
       aria-label={TITLES[shown]}
       style={{ zIndex: Z.panel }}
-      className={`absolute top-16 bottom-[88px] left-4 flex w-80 flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-lg ${
+      className={`absolute top-28 bottom-4 left-4 flex w-80 flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-lg max-lg:top-40 ${
         exiting ? 'pointer-events-none' : ''
       }`}
     >
@@ -100,7 +100,7 @@ function PanelHeader({ shown, onClose }: { shown: PanelId; onClose: () => void }
               colorPinned ? 'bg-accent text-on-accent' : 'text-ink-2 hover:bg-hover'
             }`}
           >
-            <PushPin size={16} weight={colorPinned ? 'fill' : 'regular'} aria-hidden />
+            <PushPin size={14} weight={colorPinned ? 'fill' : 'regular'} aria-hidden />
           </button>
         )}
         <button
@@ -110,7 +110,7 @@ function PanelHeader({ shown, onClose }: { shown: PanelId; onClose: () => void }
           title={copy.closePanel}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-2 hover:bg-hover"
         >
-          <X size={16} aria-hidden />
+          <X size={14} aria-hidden />
         </button>
       </div>
     </header>

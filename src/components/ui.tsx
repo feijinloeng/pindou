@@ -14,7 +14,7 @@ import { useOverlayEscape, Z } from './overlayState'
 
 /**
  * 共享控件。视觉值全部来自 index.css 的语义 token，不写死颜色。
- * 尺寸规矩（spec 3.1）：桌面控件 ≥36px 高，图标靶 40×40，触屏 44×44；
+ * 尺寸规矩（85% 设计尺寸）：控件约 31px 高，图标靶 34×34，触屏约 37×37；
  * 按钮/输入圆角 8，气泡/面板/卡片 12。
  */
 
@@ -89,15 +89,25 @@ export function Btn({
   )
 }
 
-/* ---------- 提示：悬停 350ms 后出现，键盘聚焦立刻出现。纯 CSS，没有定时器要清 ---------- */
+/* ---------- 提示：悬停 500ms 后出现，键盘聚焦立刻出现。纯 CSS，没有定时器要清 ---------- */
 
-export function Tip({ label, children }: { label: string; children: ReactNode }) {
+export function Tip({
+  label,
+  children,
+  placement = 'top',
+}: {
+  label: string
+  children: ReactNode
+  placement?: 'top' | 'bottom'
+}) {
   return (
     <span className="group/tip relative inline-flex">
       {children}
       <span
         role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 hidden -translate-x-1/2 rounded-md bg-ink px-2 py-1 text-xs whitespace-nowrap text-surface opacity-0 shadow-md transition-opacity group-hover/tip:block group-hover/tip:opacity-100 group-hover/tip:delay-[350ms] group-focus-within/tip:block group-focus-within/tip:opacity-100 group-focus-within/tip:delay-0"
+        className={`pointer-events-none absolute left-1/2 hidden -translate-x-1/2 rounded-md bg-ink px-2 py-1 text-xs whitespace-nowrap text-surface opacity-0 shadow-md transition-opacity group-hover/tip:block group-hover/tip:opacity-100 group-hover/tip:delay-[500ms] group-focus-within/tip:block group-focus-within/tip:opacity-100 group-focus-within/tip:delay-0 ${
+          placement === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'
+        }`}
       >
         {label}
       </span>
@@ -105,7 +115,7 @@ export function Tip({ label, children }: { label: string; children: ReactNode })
   )
 }
 
-/* ---------- 图标按钮：40×40，tip 文本同时是可访问名 ---------- */
+/* ---------- 图标按钮：34×34，tip 文本同时是可访问名 ---------- */
 
 export function IconBtn({
   icon,
@@ -113,7 +123,7 @@ export function IconBtn({
   onClick,
   active,
   disabled,
-  size = 40,
+  size = 34,
 }: {
   icon: ReactNode
   label: string
@@ -528,7 +538,7 @@ export function Modal({
             ? `fixed inset-x-0 bottom-0 flex max-h-[72dvh] flex-col rounded-t-xl border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] shadow-xl ${
                 exiting ? 'pointer-events-none' : ''
               }`
-            : `fixed top-1/2 left-1/2 w-[min(92vw,360px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface p-4 shadow-xl ${
+            : `fixed top-1/2 left-1/2 w-[min(92vw,306px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface p-4 shadow-xl ${
                 exiting ? 'pointer-events-none' : ''
               }`
         }

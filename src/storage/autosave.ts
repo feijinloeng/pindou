@@ -2,7 +2,7 @@ import { useEditor } from '../editor/store'
 import type { Project } from '../domain/project'
 
 /**
- * 自动保存：编辑操作 debounce 2 秒写一次，跟做模式进度变化立刻写（第 14.1 节）。
+ * 自动保存：编辑操作 debounce 2 秒写一次，重命名立刻写。
  * 没有 indexedDB 的环境（测试、SSR）直接跳过。
  */
 export function startAutosave(debounceMs = 2000): () => void {
@@ -21,8 +21,8 @@ export function startAutosave(debounceMs = 2000): () => void {
   const unsubscribe = useEditor.subscribe((state, previous) => {
     if (state.commitVersion !== previous.commitVersion) schedule(false)
     if (state.projectId !== previous.projectId) return
-    // 跟做进度和名字是"立刻写"的：丢了会让人白拼半小时
-    if (state.making !== previous.making || state.name !== previous.name) schedule(true)
+    // 名字是"立刻写"的：不要让重命名在 debounce 窗口里丢掉
+    if (state.name !== previous.name) schedule(true)
   })
 
   const onHidden = () => {

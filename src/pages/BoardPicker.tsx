@@ -26,7 +26,7 @@ interface Draft extends BoardPlacement {
 }
 
 /**
- * 底板排布（spec 8）：桌面 260px 配置侧栏 + 排列工作区。
+ * 底板排布（spec 8）：桌面 221px 配置侧栏 + 排列工作区。
  * 交互/校验沿用旧实现：吸附、拖放、键盘移动、右键/删除、重叠和针距校验、丢格警告。
  */
 export default function BoardPicker() {
@@ -213,7 +213,7 @@ export default function BoardPicker() {
                   active ? 'border-accent bg-hover text-ink' : 'border-line text-ink hover:bg-hover'
                 }`}
               >
-                <SquaresFour size={20} aria-hidden className="shrink-0 text-ink-2" />
+                <SquaresFour size={17} aria-hidden className="shrink-0 text-ink-2" />
                 <span className="flex flex-col">
                   <span className="font-mono">{profile.pegs} × {profile.pegs}</span>
                   <span className="text-xs text-ink-2">{profile.pitchMm}mm · {area.toFixed(1)} × {area.toFixed(1)}mm</span>
@@ -227,14 +227,14 @@ export default function BoardPicker() {
   )
 
   return (
-    <div className="flex h-full min-h-0 flex-col md:flex-row">
-      {/* 260px 配置侧栏；移动端变成顶部横排型号 */}
-      <aside className="flex shrink-0 flex-col border-b border-line bg-surface md:w-[260px] md:border-r md:border-b-0">
+    <div className="box-border flex h-full min-h-0 flex-col pt-16 md:flex-row">
+      {/* 221px 配置侧栏；移动端变成顶部横排型号 */}
+      <aside className="flex shrink-0 flex-col border-b border-line bg-surface md:w-[221px] md:border-r md:border-b-0">
         <div className="px-3 pt-3"><h2 className="text-base font-semibold">{copy.models}</h2></div>
         {models}
         {!mobile && (
           <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
-            <Btn onClick={addBoard} wide><span>＋</span>{copy.addBoard}</Btn>
+            <Btn onClick={addBoard} wide>{copy.addBoard}</Btn>
             <div className="mt-4">{summary}</div>
             <div className="mt-auto pt-4">
               {error && <p role="alert" className="mb-2 rounded-lg bg-warn-bg p-2 text-xs text-warn-ink">{error}</p>}
@@ -250,9 +250,9 @@ export default function BoardPicker() {
           <span className="font-medium">{copy.title}</span>
           <span className="hidden text-xs text-ink-2 md:inline">{copy.nowPicking} {pegs}×{pegs}</span>
           <Btn onClick={() => { setDraft((current) => current.slice(0, -1)); setError(null) }} disabled={!draft.length}>
-            <Minus size={14} aria-hidden />{copy.undoOne}
+            <Minus size={12} aria-hidden />{copy.undoOne}
           </Btn>
-          <Menu label={<DotsThree size={18} aria-hidden />} title={copy.more} triggerVariant="ghost" width="w-40">
+          <Menu label={<DotsThree size={15} aria-hidden />} title={copy.more} triggerVariant="ghost" width="w-40">
             {(close) => <MenuItem onClick={() => { setDraft([]); setSelectedKey(null); setError(null); close() }} disabled={!draft.length}>{copy.clear}</MenuItem>}
           </Menu>
           <label className="ml-auto flex items-center gap-1 text-xs text-ink-2">
@@ -294,7 +294,7 @@ export default function BoardPicker() {
                     onPointerDown={(e) => { if (e.button !== 0) return; e.currentTarget.setPointerCapture(e.pointerId); setSelectedKey(p.key); setDragging({ key: p.key, col: live.col, row: live.row }); setType(p.board) }}
                     onPointerCancel={() => setDragging(null)} onLostPointerCapture={() => setDragging(null)} onContextMenu={(e) => { e.preventDefault(); removeBoard(p.key) }}
                     title={`${size}×${size} · ${(size * BOARD_PROFILES[p.board].pitchMm).toFixed(1)}mm · ${copy.removeHint}`}
-                    className={`flex cursor-move touch-none items-center justify-center rounded-sm border-2 text-[10px] ${active ? 'border-accent bg-hover text-ink' : 'border-line bg-surface/85 text-ink-2'}`}
+                    className={`flex cursor-move touch-none items-center justify-center rounded-sm border-2 text-[8.5px] ${active ? 'border-accent bg-hover text-ink' : 'border-line bg-surface/85 text-ink-2'}`}
                     style={{ width: px, height: px }}
                   >{px > 26 && size}</div>
                 </div>

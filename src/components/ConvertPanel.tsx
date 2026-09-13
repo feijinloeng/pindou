@@ -77,7 +77,7 @@ export default function ConvertPanel() {
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-line p-4 text-center">
-            <ImageIcon size={24} className="text-ink-2" aria-hidden />
+            <ImageIcon size={20} className="text-ink-2" aria-hidden />
             <Btn variant="primary" onClick={() => fileRef.current?.click()}>
               {copy.pickImage}
             </Btn>
@@ -87,7 +87,7 @@ export default function ConvertPanel() {
 
         {sourceCached && (
           <p role="note" className="flex items-start gap-1.5 rounded-lg bg-warn-bg p-2 text-xs text-warn-ink">
-            <Warning size={14} className="mt-0.5 shrink-0" aria-hidden />
+            <Warning size={12} className="mt-0.5 shrink-0" aria-hidden />
             {copy.cachedSource}
           </p>
         )}

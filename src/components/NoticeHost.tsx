@@ -8,7 +8,7 @@ import { Z } from './overlayState'
  * 全局通知：挂在编辑/导出/选板的分支之外，导出失败、转换完成这类反馈
  * 在哪个子状态都看得见。成功 4 秒自己消失；错误一直留到手动关掉或纠正。
  *
- * 跟做页全屏时也用它 —— 必须挂在全屏目标的子树里，portal 到 body 就看不见了，
+ * 全屏时也用它 —— 必须挂在全屏目标的子树里，portal 到 body 就看不见了，
  * 所以这里不用 OverlayPortal，调用方把它放在需要的位置。
  */
 export default function NoticeHost() {

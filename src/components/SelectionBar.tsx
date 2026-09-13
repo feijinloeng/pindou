@@ -35,7 +35,7 @@ export default function SelectionBar() {
       role="toolbar"
       aria-label={copy.selection}
       style={{ zIndex: Z.controls }}
-      className={`absolute top-16 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-line bg-surface px-1.5 py-1 shadow-md ${
+      className={`absolute top-16 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-line bg-surface px-1.5 py-1 shadow-md max-lg:top-28 max-md:top-16 ${
         exiting ? 'pointer-events-none' : ''
       }`}
     >
@@ -130,7 +130,7 @@ export default function SelectionBar() {
         title={copy.selCancel}
         className="ml-0.5 flex h-8 w-8 items-center justify-center rounded-lg text-ink-2 hover:bg-hover"
       >
-        <X size={14} aria-hidden />
+        <X size={12} aria-hidden />
       </button>
     </div>
   )

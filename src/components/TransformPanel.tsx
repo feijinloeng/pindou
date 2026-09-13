@@ -31,22 +31,22 @@ export default function TransformPanel() {
 
   const ops = [
     {
-      icon: <ArrowClockwise size={18} aria-hidden />,
+      icon: <ArrowClockwise size={15} aria-hidden />,
       label: copy.rotateWholeCw,
       onClick: () => whole((s) => s.rotate(1)),
     },
     {
-      icon: <ArrowCounterClockwise size={18} aria-hidden />,
+      icon: <ArrowCounterClockwise size={15} aria-hidden />,
       label: copy.rotateWholeCcw,
       onClick: () => whole((s) => s.rotate(-1)),
     },
     {
-      icon: <FlipHorizontal size={18} aria-hidden />,
+      icon: <FlipHorizontal size={15} aria-hidden />,
       label: copy.mirrorWholeH,
       onClick: () => whole((s) => s.mirror('h')),
     },
     {
-      icon: <FlipVertical size={18} aria-hidden />,
+      icon: <FlipVertical size={15} aria-hidden />,
       label: copy.mirrorWholeV,
       onClick: () => whole((s) => s.mirror('v')),
     },
@@ -78,13 +78,13 @@ export default function TransformPanel() {
         <p className="mb-1 text-xs text-ink-2">{copy.transformMove}</p>
         <div className="grid w-28 grid-cols-3 gap-1">
           <span />
-          <MoveBtn icon={<ArrowUp size={16} aria-hidden />} label="↑" onClick={() => whole((s) => s.translate(0, -1))} />
+          <MoveBtn icon={<ArrowUp size={14} aria-hidden />} label="↑" onClick={() => whole((s) => s.translate(0, -1))} />
           <span />
-          <MoveBtn icon={<ArrowLeft size={16} aria-hidden />} label="←" onClick={() => whole((s) => s.translate(-1, 0))} />
+          <MoveBtn icon={<ArrowLeft size={14} aria-hidden />} label="←" onClick={() => whole((s) => s.translate(-1, 0))} />
           <span />
-          <MoveBtn icon={<ArrowRight size={16} aria-hidden />} label="→" onClick={() => whole((s) => s.translate(1, 0))} />
+          <MoveBtn icon={<ArrowRight size={14} aria-hidden />} label="→" onClick={() => whole((s) => s.translate(1, 0))} />
           <span />
-          <MoveBtn icon={<ArrowDown size={16} aria-hidden />} label="↓" onClick={() => whole((s) => s.translate(0, 1))} />
+          <MoveBtn icon={<ArrowDown size={14} aria-hidden />} label="↓" onClick={() => whole((s) => s.translate(0, 1))} />
           <span />
         </div>
       </div>

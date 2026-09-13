@@ -23,7 +23,7 @@ interface ExportFlags {
 }
 
 /**
- * 导出（spec 9）：左边真实预览，右边 380px 输出列。
+ * 导出（spec 9）：左边真实预览，右边 323px 输出列。
  * 四个输出可一起选（至少留一个），选项只跟着被选的那行展开；
  * 预估和警告在导出按钮之前常显。多个输出仍然打包成一个 zip。
  */
@@ -120,7 +120,7 @@ export default function ExportStage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
-        <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1fr)_323px]">
           {/* 左：真实预览，占足视觉空间 */}
           <section
             aria-label={copy.previewTitle}
@@ -255,7 +255,7 @@ export default function ExportStage() {
               </ul>
               {estimate.warnings.map((warning) => (
                 <p key={warning} role="status" className="mt-1 flex items-start gap-1 text-warn-ink">
-                  <Warning size={13} className="mt-0.5 shrink-0" aria-hidden />
+                  <Warning size={11} className="mt-0.5 shrink-0" aria-hidden />
                   {warning}
                 </p>
               ))}
@@ -310,7 +310,7 @@ function OutputRow({
             checked ? 'border-accent bg-accent text-on-accent' : 'border-line bg-surface'
           }`}
         >
-          {checked && <Check size={12} weight="bold" />}
+          {checked && <Check size={10} weight="bold" />}
         </span>
         <span className="text-sm font-medium text-ink">
           {title}

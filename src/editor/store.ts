@@ -32,13 +32,11 @@ import { DEFAULT_SETTINGS, type ConversionSettings } from '../conversion/convert
 import {
   createProject,
   normalizeGridForLayout,
-  type MakingProgress,
   type Project,
   type ProjectView,
 } from '../domain/project'
 import { putProject, rememberLastProject, restoreLastProject, saveDraft, getImage, putImage, remove } from '../storage/db'
 import { compressForCache } from '../storage/imageCache'
-import type { RecommendStrategy } from '../follow/followMode'
 import { runConvert } from '../conversion/convertClient'
 import { resolveStrategy, STRATEGIES } from '../conversion/strategies'
 import { decodeImageFile } from '../conversion/decode'
@@ -62,9 +60,6 @@ export interface EditorState {
   projectId: string
   customer: string | null
   createdAt: string
-  /** 跟做模式进度 */
-  making: MakingProgress
-  recommendStrategy: RecommendStrategy
   /** 上次保存时间（界面显示"已保存"用） */
   savedAt: string | null
   saving: boolean
@@ -119,12 +114,6 @@ export interface EditorState {
   /** 打开选板页。取消时回 returnTo 指的地方，不静默丢掉排板 */
   openPicker(returnTo?: 'library' | 'edit'): void
   closePicker(): void
-  setName(name: string): void
-  setCustomer(customer: string | null): void
-  setRecommendStrategy(strategy: RecommendStrategy): void
-  setFocusCode(code: string | null): void
-  toggleRegion(code: string, regionId: number): void
-  resetMaking(): void
   /** 把当前状态打包成工程对象 */
   toProject(): Project
   /** 立刻落盘：explicit=true 表示用户自己点的保存（会打开导出这条路） */
@@ -140,7 +129,6 @@ export interface EditorState {
   setPalette(id: string): void
   toggleCode(code: string): void
   restoreAllCodes(): void
-  setShowCodes(show: boolean): void
   setVp(vp: Viewport): void
   fitTo(width: number, height: number, dpr?: number): void
   /** 画布旁开着哪个临时面板（纯界面状态，不进工程文件） */
@@ -246,8 +234,6 @@ export const useEditor = create<EditorState>((set, get) => ({
   savedCommitVersion: null,
   pickerReturn: 'library',
   createdAt: new Date().toISOString(),
-  making: { completedCodes: [], completedRegions: {}, focusCode: null, startedAt: null },
-  recommendStrategy: 'largest',
   savedAt: null,
   saving: false,
   saveError: null,
@@ -362,55 +348,6 @@ export const useEditor = create<EditorState>((set, get) => ({
     set({ stage: 'edit' })
   },
 
-  setName(name) {
-    set({ name })
-  },
-
-  setCustomer(customer) {
-    set({ customer })
-  },
-
-  setRecommendStrategy(recommendStrategy) {
-    set({ recommendStrategy })
-  },
-
-  setFocusCode(focusCode) {
-    const making = get().making
-    // 值没变就别 set：store 状态对象换了 identity，订阅它的组件会再跑一次 effect，
-    // 那些 effect 又调回来 —— 就是"Maximum update depth exceeded"
-    if (making.focusCode === focusCode && making.startedAt) return
-    set({
-      making: {
-        ...making,
-        focusCode,
-        startedAt: making.startedAt ?? new Date().toISOString(),
-      },
-    })
-  },
-
-  /** 点一个连通域 = 整块标记完成（第 12 节） */
-  toggleRegion(code, regionId) {
-    const { making } = get()
-    const done = new Set(making.completedRegions[code] ?? [])
-    if (done.has(regionId)) done.delete(regionId)
-    else done.add(regionId)
-    const next: MakingProgress = {
-      ...making,
-      completedRegions: {
-        ...making.completedRegions,
-        [code]: [...done].sort((a, b) => a - b),
-      },
-      startedAt: making.startedAt ?? new Date().toISOString(),
-    }
-    set({ making: next })
-  },
-
-  resetMaking() {
-    set({
-      making: { completedCodes: [], completedRegions: {}, focusCode: null, startedAt: null },
-    })
-  },
-
   toProject() {
     const state = get()
     return {
@@ -425,7 +362,6 @@ export const useEditor = create<EditorState>((set, get) => ({
       allowedCodes: state.allowedCodes,
       grid: state.grid,
       conversion: state.conversion,
-      making: state.making,
       view: {
         zoom: state.vp.zoom,
         panX: state.vp.panX,
@@ -493,9 +429,6 @@ export const useEditor = create<EditorState>((set, get) => ({
       allowedCodes: project.allowedCodes,
       colorIndex: defaultColorIndex(getPalette(pid)),
       conversion: project.conversion ?? DEFAULT_SETTINGS,
-      making: project.making,
-      // 跟做模式/转换面板这些"临时运行状态"必须跟着工程一起换，否则显示的是上个工程
-      recommendStrategy: 'largest',
       clipboard: null,
       selection: [],
       pending: null,
@@ -663,9 +596,6 @@ export const useEditor = create<EditorState>((set, get) => ({
   restoreAllCodes() {
     invalidateConversion()
     set({ allowedCodes: null, converting: false, progress: null, notice: '恢复全部色号' })
-  },
-  setShowCodes(showCodes) {
-    set({ showCodes, version: get().version + 1, commitVersion: get().commitVersion + 1 })
   },
   setVp(vp) {
     set({ vp })

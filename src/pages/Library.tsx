@@ -92,19 +92,6 @@ export default function Library() {
     }
   }
 
-  /** 跟着拼：同一个作品换个页面用，不强制走编辑那一步 */
-  const followProject = async (id: string) => {
-    await openProjectSilently(id)
-    navigate('follow')
-  }
-
-  const openProjectSilently = async (id: string) => {
-    const entry = entries.find((e) => e.project.id === id)
-    const draft = await getDraft(id)
-    const target = draft ?? entry?.project
-    if (target) useEditor.getState().loadProject(target, !entry?.hasNewerDraft)
-  }
-
   const duplicate = (project: Project) =>
     runWrite(async () => {
       const clone = createProject({
@@ -119,7 +106,6 @@ export default function Library() {
         customer: project.customer,
         allowedCodes: project.allowedCodes,
         conversion: project.conversion,
-        making: project.making,
       })
       await refresh()
     })
@@ -208,15 +194,15 @@ export default function Library() {
   }, [shown.length])
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-[1280px] flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6">
+    <div className="mx-auto flex h-full w-full max-w-[1088px] flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6">
       <div className="flex flex-wrap items-end gap-2">
         <div>
-          <h2 className="text-[28px] leading-tight font-semibold">{copy.title}</h2>
+          <h2 className="text-[23.8px] leading-tight font-semibold">{copy.title}</h2>
           <p className="text-sm text-ink-2">{copy.subtitle}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Btn variant="primary" onClick={() => setNewOpen(true)} disabled={busy}>
-            <Plus size={16} aria-hidden />
+            <Plus size={14} aria-hidden />
             {copy.new}
           </Btn>
           <Btn onClick={() => fileRef.current?.click()} disabled={busy}>
@@ -240,7 +226,7 @@ export default function Library() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <MagnifyingGlass
-            size={14}
+            size={12}
             aria-hidden
             className="absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-2"
           />
@@ -259,7 +245,7 @@ export default function Library() {
               onClick={() => setQuery('')}
               className="absolute top-1/2 right-1.5 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-ink-2 hover:bg-hover"
             >
-              <X size={12} aria-hidden />
+              <X size={10} aria-hidden />
             </button>
           )}
         </div>
@@ -320,7 +306,7 @@ export default function Library() {
               <p className="text-sm text-ink-2">{copy.empty}</p>
               <div className="flex gap-2">
                 <Btn variant="primary" onClick={() => setNewOpen(true)}>
-                  <Plus size={16} aria-hidden />
+                  <Plus size={14} aria-hidden />
                   {copy.new}
                 </Btn>
                 <Btn onClick={() => fileRef.current?.click()}>{copy.import}</Btn>
@@ -337,7 +323,6 @@ export default function Library() {
             entry={entry}
             busy={busy}
             onOpen={() => void openProject(entry.project.id)}
-            onFollow={() => void followProject(entry.project.id)}
             onDuplicate={() => void duplicate(entry.project)}
             onRename={() => void rename(entry.project)}
             onDelete={() => void remove(entry.project)}
@@ -366,7 +351,6 @@ function ProjectCard({
   entry,
   busy,
   onOpen,
-  onFollow,
   onDuplicate,
   onRename,
   onDelete,
@@ -378,7 +362,6 @@ function ProjectCard({
   entry: LibraryEntry
   busy: boolean
   onOpen: () => void
-  onFollow: () => void
   onDuplicate: () => void
   onRename: () => void
   onDelete: () => void
@@ -401,7 +384,7 @@ function ProjectCard({
 
   return (
     <article
-      className={`flex flex-col overflow-hidden rounded-xl border bg-surface ${
+      className={`flex flex-col rounded-xl border bg-surface ${
         deleted ? 'border-dashed border-line' : 'border-line'
       }`}
     >
@@ -410,7 +393,7 @@ function ProjectCard({
         onClick={onOpen}
         disabled={busy}
         aria-label={`${copy.open}《${cleanName(project.name)}》`}
-        className="group block text-left"
+        className="group block overflow-hidden rounded-t-xl text-left"
       >
         {/* 4:3 预览区：图案本身是最大的视觉，操作都让开 */}
         <div className="flex aspect-[4/3] items-center justify-center border-b border-line bg-hover">
@@ -424,7 +407,7 @@ function ProjectCard({
           <p className="flex items-center gap-2 text-sm font-medium text-ink">
             <span className="truncate">{cleanName(project.name)}</span>
             {entry.hasNewerDraft && (
-              <span className="shrink-0 rounded bg-warn-bg px-1.5 py-0.5 text-[10px] text-warn-ink">
+              <span className="shrink-0 rounded bg-warn-bg px-1.5 py-0.5 text-[8.5px] text-warn-ink">
                 {copy.hasDraft}
               </span>
             )}
@@ -435,17 +418,14 @@ function ProjectCard({
           <p className="text-xs text-ink-2 tabular">
             {summary.boardCount} 块板 · {summary.sizeMm.w.toFixed(0)}×{summary.sizeMm.h.toFixed(0)}mm
           </p>
-          <p className="text-[11px] text-ink-2/70">
+          <p className="text-[9.35px] text-ink-2/70">
             {copy.updatedAt} {formatStamp(project.updatedAt)}
           </p>
         </div>
       </button>
       <div className="flex items-center gap-1 border-t border-line px-2 py-1.5">
-        <Btn onClick={onFollow} disabled={busy} variant="ghost">
-          {copy.follow}
-        </Btn>
         <span className="ml-auto" />
-        <Menu label={<DotsThreeVertical size={18} aria-hidden />} title={copy.more} align="right" width="w-48" triggerVariant="ghost">
+        <Menu label={<DotsThreeVertical size={15} aria-hidden />} title={copy.more} align="right" width="w-48" triggerVariant="ghost">
           {(close) => (
             <>
               {deleted ? (
