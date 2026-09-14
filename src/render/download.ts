@@ -19,3 +19,8 @@ export function downloadBytes(bytes: Uint8Array, filename: string, mime: string)
 export function safeName(name: string): string {
   return (name || '作品').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)
 }
+
+/** 导出包内主文件的统一命名：编号 + 作品名 + 输出类型。 */
+export function exportFilename(order: number, base: string, label: string, extension: string): string {
+  return `${order}.${base}（${label}）.${extension}`
+}

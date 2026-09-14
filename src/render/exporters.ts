@@ -4,13 +4,13 @@ import type { BoardGeometry } from '../domain/board'
 import type { CellGrid } from '../domain/grid'
 import { PT_PER_MM } from '../domain/geometry'
 import type { Palette } from '../domain/palette'
-import { bomToCsv, buildBom } from './bom'
+import { bomPageCount, bomToCsv, buildBom, paletteDisplayLabel } from './bom'
 import { paperLayout, screenLayout } from './documentLayout'
 import { renderPaperPdf } from './documentPaper'
 import { renderScreenPdf } from './documentScreen'
 import { createPdfSink } from './pdf'
 import { drawPreview, planPreview } from './previewImage'
-import { safeName } from './download'
+import { exportFilename, safeName } from './download'
 
 /**
  * 导出编排：只负责"调渲染 + 组装文件 + 触发下载"，不含任何排版数学。
@@ -51,6 +51,7 @@ export function buildScreenPdf(ctx: ExportContext, options: ScreenExportOptions)
 }
 
 export interface PaperExportOptions {
+  /** 兼容旧调用：多个板会合并成一个连续外接范围 */
   boards?: BoardGeometry['boards']
   marginMm?: number
   overlap?: number
@@ -60,56 +61,49 @@ export interface PaperExportOptions {
 }
 
 export function buildPaperPdf(ctx: ExportContext, options: PaperExportOptions): Uint8Array {
-  const sink = createPdfSink({ widthPt: 210 * PT_PER_MM, heightPt: 297 * PT_PER_MM })
+  const renderOptions = {
+    marginMm: options.marginMm,
+    overlap: options.overlap,
+    showCodes: options.showCodes ?? true,
+    includeBom: options.includeBom ?? true,
+    boards: options.boards,
+  }
+  const layout = paperLayout(ctx.grid, ctx.pitchMm, renderOptions)
+  const sink = createPdfSink({
+    widthPt: layout.pageMm.w * PT_PER_MM,
+    heightPt: layout.pageMm.h * PT_PER_MM,
+  })
   renderPaperPdf(sink, {
     grid: ctx.grid,
     palette: ctx.palette,
     geom: ctx.geom,
     pitchMm: ctx.pitchMm,
     pitchLabel: ctx.pitchMm,
-    showCodes: options.showCodes,
-    includeBom: options.includeBom,
-    marginMm: options.marginMm,
-    overlap: options.overlap,
-    boards: options.boards,
+    ...renderOptions,
     instructions: options.instructions,
+    projectName: ctx.name,
   })
   return sink.output()
 }
 
 /**
- * 超大图整图导出：**zip，每块板一个单页 PDF** —— 拼完一块印一块。
- * 里面附一个总览图和用量 CSV。
+ * 整图打印资料包：一份连续分页的 A4 PDF，加上用量清单和中文说明文本。
+ * 旧版本这里按板拆 PDF；现在必须按整张板阵分页，避免每块板旁边留下大量空白。
  */
 export function buildPaperZip(ctx: ExportContext, options: PaperExportOptions = {}): Uint8Array {
   const files: Record<string, Uint8Array> = {}
+  files['打印版.pdf'] = buildPaperPdf(ctx, {
+    ...options,
+    boards: undefined,
+    showCodes: options.showCodes ?? true,
+    includeBom: true,
+    instructions: true,
+  })
 
-  for (const board of ctx.geom.boards) {
-    const sink = createPdfSink({ widthPt: 210 * PT_PER_MM, heightPt: 297 * PT_PER_MM })
-    renderPaperPdf(sink, {
-      grid: ctx.grid,
-      palette: ctx.palette,
-      geom: ctx.geom,
-      pitchMm: ctx.pitchMm,
-      pitchLabel: ctx.pitchMm,
-      showCodes: options.showCodes,
-      includeBom: false,
-      marginMm: options.marginMm,
-      overlap: options.overlap,
-      boards: [board],
-    })
-    // 命名格式：板-{序号}-{板型}.pdf（第 11.3 节）。自由摆放的板没有可靠行列号，
-    // 序号就是用户认得的“第几块板”
-    const name = `板-${board.index + 1}-${board.cw}.pdf`
-    files[name] = sink.output()
-  }
-
-  files['用量.csv'] = new TextEncoder().encode(
-    bomToCsv(buildBom(ctx.grid, ctx.palette), ctx.palette.displayName),
-  )
+  files['用量.csv'] = buildBomCsv(ctx)
   // 带 BOM：Windows 记事本不认没有 BOM 的 UTF-8，中文会变乱码
   files['总览.txt'] = utf8WithBom(overviewText(ctx, options))
-  files['打印说明.txt'] = utf8WithBom(printNotes(ctx))
+  files['打印说明.txt'] = utf8WithBom(printNotes(ctx, options))
 
   return zipSync(files, { level: 6 })
 }
@@ -122,36 +116,39 @@ function utf8WithBom(text: string): Uint8Array {
   return out
 }
 
-/**
- * 中文打印说明（PDF 说明页只能用英文：jsPDF 内置字体没有 CJK，
- * 塞中文要么变方块、要么得自带几 MB 字体子集。详见 adr/0005 之外的取舍记录）
- */
-function printNotes(ctx: ExportContext): string {
+/** 中文打印说明（资料包内的文字版，PDF 末页也有同一套说明）。 */
+function printNotes(ctx: ExportContext, options: PaperExportOptions): string {
   const mm = (n: number) => n.toFixed(1)
+  const layout = paperLayout(ctx.grid, ctx.pitchMm, {
+    marginMm: options.marginMm,
+    overlap: options.overlap,
+    showCodes: options.showCodes ?? true,
+    includeBom: true,
+  })
   return [
     `《${ctx.name}》打印说明`,
     '',
     '一、打印设置',
-    '  1. 纸张选 A4，方向按每页页眉标注（横版 / 竖版）。',
+    `  1. 纸张选 A4，方向按每页页眉标注（${layout.orientation === 'landscape' ? '横向' : '纵向'}）。`,
     '  2. 缩放必须选「100%」「实际大小」，或把缩放设为「无」。',
     '     绝对不要选「适合页面」「适应边框」——那样每格的针距就不是 1:1 了。',
-    '  3. 打印完先量第一页页脚的 100mm 校准尺。量出来不是 100.0mm 就回去改缩放。',
+    '  3. 打印完先量第一页页脚的 100 毫米校准尺。量出来不是 100.0 毫米就回去改缩放。',
     '',
     '二、拼接',
-    `  1. 成品总尺寸约 ${mm(ctx.geom.cols * ctx.pitchMm)} × ${mm(ctx.geom.rows * ctx.pitchMm)} mm，`,
-    `     共 ${ctx.geom.boards.length} 块板、${ctx.geom.cols} × ${ctx.geom.rows} 格、针距 ${ctx.pitchMm}mm。`,
-    '  2. 相邻两页之间是重叠带：两页有一小片内容重复。别裁掉，直接把两页摆好、',
-    '     让重叠带里的对位十字对齐，再用胶带从背面粘住。',
-    '  3. 按顺序拼：先横向拼成一整条，再把横条自上而下接起来。',
+    `  1. 成品总尺寸约 ${mm(ctx.geom.cols * ctx.pitchMm)} × ${mm(ctx.geom.rows * ctx.pitchMm)} 毫米，`,
+    `     共 ${ctx.geom.boards.length} 块底板、${ctx.geom.cols} × ${ctx.geom.rows} 格、针距 ${ctx.pitchMm} 毫米。`,
+    `  2. 相邻两页有 ${layout.overlap} 格重叠内容。红色虚线围出的区域不要裁掉，先让相同颜色、格线和对位十字重合。`,
+    '     对齐后从纸背面贴胶带；误差不会随着页数一直累积。',
+    '  3. 按页码拼：先从左到右拼成一排，再把各排从上到下接起来。',
     '',
     '三、照着摆豆',
     '  1. 把打印稿垫在透明底板下面，从上往下、从左往右，一格一颗。',
     '  2. 每一格上的色号就是这一颗豆的色号；区域中间的大号字是那一片的主色。',
     '  3. 页边的数字是坐标，拼到一半走神了可以靠它找位置。',
-    '  4. 每块板的用量见「用量.csv」，可用 Excel / 表格软件打开。',
+    '  4. 色用量见最后的清单页，也会附一份「用量.csv」，可用表格软件打开。',
     '',
-    `色板：${ctx.palette.displayName}`,
-    `页面：屏幕版与纸面版（1:1）都是矢量 PDF，放大不会糊。`,
+    `色板：${printPaletteLabel(ctx.palette)}`,
+    `纸样：${layout.pages?.length ?? layout.sheets.length} 张 A4，1:1 矢量 PDF，放大不会糊。`,
   ].join('\n')
 }
 
@@ -161,21 +158,25 @@ function overviewText(ctx: ExportContext, options: PaperExportOptions): string {
   const layout = paperLayout(ctx.grid, ctx.pitchMm, {
     marginMm: options.marginMm,
     overlap: options.overlap,
-    boards: ctx.geom.boards,
   })
   return [
     `${ctx.name}`,
-    `色板：${ctx.palette.displayName}`,
-    `针距：${ctx.pitchMm}mm`,
+    `色板：${printPaletteLabel(ctx.palette)}`,
+    `针距：${ctx.pitchMm} 毫米`,
     `板阵：${ctx.geom.boards.length} 块板，${ctx.geom.cols} × ${ctx.geom.rows} 格`,
-    `成品尺寸：${(ctx.geom.cols * ctx.pitchMm).toFixed(1)} × ${(ctx.geom.rows * ctx.pitchMm).toFixed(1)} mm`,
+    `成品尺寸：${(ctx.geom.cols * ctx.pitchMm).toFixed(1)} × ${(ctx.geom.rows * ctx.pitchMm).toFixed(1)} 毫米`,
     `豆数合计：${total}`,
     `色数：${rows.length}`,
-    `打印页数：${layout.sheets.length}（每块板 1-2 张 A4）`,
+    `纸样页数：${layout.pages?.length ?? layout.sheets.length} 张 A4（方向：${layout.orientation === 'landscape' ? '横向' : '纵向'}）`,
+    `重叠带：${layout.overlap} 格；PDF 末尾另附 ${bomPageCount(rows.length, layout.pageMm.h * PT_PER_MM)} 页用量清单和 1 页使用说明`,
     '',
-    '打印请选 100% / 实际大小，关闭"适合页面"。每页页脚都有 100mm 校准尺，量一下必须是 100.0mm。',
-    '拼接方法见每块板 PDF 里的说明页。',
+    '打印请选 100% / 实际大小，关闭"适合页面"。每页页脚都有 100 毫米校准尺，量一下必须是 100.0 毫米。',
+    '拼接方法见打印 PDF 最后一页的中文使用说明。',
   ].join('\n')
+}
+
+function printPaletteLabel(palette: Palette): string {
+  return paletteDisplayLabel(palette).replace(/\bmm\b/gi, '毫米')
 }
 
 export interface PreviewExportOptions {
@@ -217,7 +218,7 @@ export async function buildPreviewPng(
 }
 
 export function buildBomCsv(ctx: ExportContext): Uint8Array {
-  return new TextEncoder().encode(bomToCsv(buildBom(ctx.grid, ctx.palette), ctx.palette.displayName))
+  return new TextEncoder().encode(bomToCsv(buildBom(ctx.grid, ctx.palette), paletteDisplayLabel(ctx.palette)))
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +239,7 @@ export interface ExportEstimate {
   previewBytes: number
   screenPages: number
   paperPages: number
+  paperBomPages: number
   warnings: string[]
 }
 
@@ -273,8 +275,13 @@ export function estimateExport(
     : 0
   const paperPages = selection.paper
     ? paperLayout(ctx.grid, ctx.pitchMm, {
-        boards: selection.paperScope === 'boards' ? ctx.geom.boards : undefined,
-      }).sheets.length
+        overlap: selection.paperOverlap,
+        showCodes: selection.showCodes,
+        includeBom: true,
+      })
+    : null
+  const paperBomPages = paperPages
+    ? bomPageCount(buildBom(ctx.grid, ctx.palette).length, paperPages.pageMm.h * PT_PER_MM)
     : 0
   return {
     previewWidth: plan.width,
@@ -284,7 +291,8 @@ export function estimateExport(
     previewClamped: plan.clamped,
     previewBytes,
     screenPages,
-    paperPages,
+    paperPages: paperPages?.pages?.length ?? paperPages?.sheets.length ?? 0,
+    paperBomPages,
     warnings,
   }
 }
@@ -293,9 +301,11 @@ export interface ExportSelection {
   preview: boolean
   screen: boolean
   paper: boolean
-  csv: boolean
-  paperScope: 'boards' | 'zip'
+  /** `boards` is retained as a legacy alias; both non-zip modes export the whole layout. */
+  paperScope: 'whole' | 'boards' | 'zip'
   showCodes: boolean
+  /** 相邻 A4 纸页共享的格数，默认 3 格 */
+  paperOverlap?: number
   /** 屏幕版的色号（默认开）与末页用量清单 */
   screenCodes: boolean
   screenBom: boolean
@@ -324,28 +334,36 @@ export async function buildExportBundle(
   const files: Record<string, Uint8Array> = {}
   const warnings = estimateExport(ctx, selection).warnings
   if (selection.preview) {
-    files[`${base}-预览图.png`] = await buildPreviewPng(ctx, { pxPerCell: selection.previewScale })
+    files[exportFilename(1, base, '预览图', 'png')] = await buildPreviewPng(ctx, {
+      pxPerCell: selection.previewScale,
+    })
   }
   if (selection.screen) {
-    files[`${base}-屏幕版.pdf`] = buildScreenPdf(ctx, {
+    files[exportFilename(2, base, '矢量版', 'pdf')] = buildScreenPdf(ctx, {
       showCodes: selection.screenCodes,
       includeBom: selection.screenBom,
     })
   }
-  if (selection.paper && selection.paperScope === 'boards') {
-    files[`${base}-纸面版.pdf`] = buildPaperPdf(ctx, {
-      boards: ctx.geom.boards,
+  if (selection.paper && selection.paperScope !== 'zip') {
+    files[exportFilename(3, base, '打印版', 'pdf')] = buildPaperPdf(ctx, {
       showCodes: selection.showCodes,
+      overlap: selection.paperOverlap,
       includeBom: true,
       instructions: true,
     })
   }
   if (selection.paper && selection.paperScope === 'zip') {
     // 按板导出本身就是 zip：摊开合进总包，不套娃
-    Object.assign(files, unzipSync(buildPaperZip(ctx, { showCodes: selection.showCodes })))
+    Object.assign(
+      files,
+      unzipSync(
+        buildPaperZip(ctx, {
+          showCodes: selection.showCodes,
+          overlap: selection.paperOverlap,
+        }),
+      ),
+    )
   }
-  if (selection.csv) files[`${base}-用量.csv`] = buildBomCsv(ctx)
-
   const names = Object.keys(files)
   if (names.length === 0) throw new Error('一个导出项都没勾')
   if (names.length === 1) {

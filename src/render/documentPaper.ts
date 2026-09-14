@@ -2,11 +2,16 @@ import type { BoardGeometry } from '../domain/board'
 import { EMPTY, type CellGrid } from '../domain/grid'
 import { PT_PER_MM } from '../domain/geometry'
 import type { Palette } from '../domain/palette'
-import { buildBom, drawBom } from './bom'
+import { bomPageCount, bomRowsPerPage, buildBom, drawBom, paletteDisplayLabel, totalBeads } from './bom'
 import {
+  getPaperScope,
+  OVERLAP_CELLS,
+  PAPER_HEADER_MM,
   paperLayout,
   planAnnotations,
   type DocumentLayout,
+  type PaperPage,
+  type PaperOrientation,
   type SheetRange,
 } from './documentLayout'
 import {
@@ -20,22 +25,21 @@ import {
   strokeGrid,
   THIN_GRID,
 } from './documentScreen'
-import { gray255, type PdfSink } from './pdf'
+import { type PdfSink } from './pdf'
 
 /**
  * 纸面版 1:1 制作文档（第 7、11.3 节）。
  *
- * A4 = 210 × 297mm，不可打印边距 5mm，2.6mm 针距每页 76 × 110 格，重叠带 3 列。
- * 一块 52 板正好 1 张 A4 —— 这是设计上最幸运的数字，"默认按板导出"就是这么来的。
+ * A4 = 210 × 297mm，不可打印边距 5mm；按整张板阵选择更省页的方向，
+ * 每页尽量放满图案，并用 2–3 格重叠带帮助裁切和拼接。
  */
+/** 旧调用保留的竖版 A4 尺寸常量；实际纸面导出会按布局自动选择横向或纵向。 */
 export const A4_PT = { w: 210 * PT_PER_MM, h: 297 * PT_PER_MM }
 /** 100mm 主标尺的长度（pt） */
 export const RULER_MM = 100
 export const RULER_PT = RULER_MM * PT_PER_MM
 /** 针距校验条：20 格豆 */
 export const BEAD_STRIP_CELLS = 20
-
-const OVERLAP_TINT: [number, number, number] = [0x99, 0xc0, 0xf2]
 
 export interface PaperPdfOptions {
   grid: CellGrid
@@ -47,10 +51,12 @@ export interface PaperPdfOptions {
   overlap?: number
   showCodes?: boolean
   includeBom?: boolean
-  /** 只导出这些板；不传就是整图 */
+  /** 兼容旧调用：这些板会合并成一个外接范围，不会拆成多份 PDF */
   boards?: BoardGeometry['boards']
-  /** 整图导出时附一页英文的拼接说明 */
+  /** 附一页中文的打印、裁切和拼接说明；默认开启 */
   instructions?: boolean
+  /** 用于说明页标题 */
+  projectName?: string
   /** 多页时每页之间调用（用于让底层换页） */
   onNewSheet?: (sheet: SheetRange, pageIndex: number) => void
 }
@@ -59,6 +65,7 @@ export interface PaperPdfResult {
   layout: DocumentLayout
   /** 每页画了几格（测试与自查用） */
   sheetsDrawn: number
+  bomPages: number
   pages: number
 }
 
@@ -73,95 +80,148 @@ export function renderPaperPdf(sink: PdfSink, options: PaperPdfOptions): PaperPd
   })
   const P = options.pitchMm * PT_PER_MM
   const margin = layout.marginMm * PT_PER_MM
-  // 本次导出的范围（只导出选中的板时，"是不是第一页"不能看全局坐标）
-  const scope = exportScope(grid, options.boards)
+  const pagePt = {
+    w: layout.pageMm.w * PT_PER_MM,
+    h: layout.pageMm.h * PT_PER_MM,
+  }
+  // 本次导出的范围。多个底板只决定外接范围，分页仍然是一张连续的纸样。
+  const scope = getPaperScope(grid, options.boards)
   const plan = planAnnotations(grid, palette, options.pitchMm, {
     enabled: layout.drawCodes,
   })
 
-  layout.sheets.forEach((sheet, index) => {
-    if (index > 0) {
-      sink.addPage(A4_PT.w, A4_PT.h)
-      options.onNewSheet?.(sheet, index)
+  const pages = layout.pages ?? layout.sheets.map((sheet) => ({
+    fragments: [
+      {
+        range: sheet,
+        source: sheet,
+        sourceIndex: 0,
+        xPt: margin,
+        yPt: pagePt.h - margin - PAPER_HEADER_MM * PT_PER_MM - sheet.rows * P,
+        cropped: false,
+        showLabel: false,
+      },
+    ],
+  }))
+
+  pages.forEach((page, pageIndex) => {
+    if (pageIndex > 0) {
+      sink.addPage(pagePt.w, pagePt.h)
+      options.onNewSheet?.(page.fragments[0].source, pageIndex)
     }
-    drawSheet(sink, {
-      ...options,
-      layout,
-      plan,
-      scope,
-      sheet,
-      index,
-      P,
-      margin,
-    })
+    drawHeader(
+      sink,
+      {
+        ...options,
+        layout,
+        plan,
+        scope,
+        sheet: page.fragments[0].range,
+        index: pageIndex,
+        P,
+        margin,
+        pagePt,
+        origin: { x: page.fragments[0].xPt, y: page.fragments[0].yPt },
+        sourceSheet: page.fragments[0].source,
+      },
+      page,
+      pages.length,
+    )
+    for (const fragment of page.fragments) {
+      drawSheet(sink, {
+        ...options,
+        layout,
+        plan,
+        scope,
+        sheet: fragment.range,
+        sourceSheet: fragment.source,
+        fragmentLabel: fragment.showLabel ? `片段 ${fragment.sourceIndex + 1}` : undefined,
+        index: pageIndex,
+        P,
+        margin,
+        pagePt,
+        origin: { x: fragment.xPt, y: fragment.yPt },
+      })
+    }
+    // 一张物理 A4 只放一套校准尺；片段不能各画一套，否则会挤占剪裁空白。
+    if (layout.drawRuler) {
+      drawRuler(
+        sink,
+        {
+          ...options,
+          layout,
+          plan,
+          scope,
+          sheet: page.fragments[0].range,
+          sourceSheet: page.fragments[0].source,
+          index: pageIndex,
+          P,
+          margin,
+          pagePt,
+          origin: { x: page.fragments[0].xPt, y: page.fragments[0].yPt },
+        },
+        { x: margin, y: margin },
+      )
+    }
   })
 
+  let bomPages = 0
   if (layout.includeBom) {
-    sink.addPage(A4_PT.w, A4_PT.h)
     const rows = buildBom(grid, palette)
-    drawBom(sink, rows, {
-      x: margin,
-      yTop: A4_PT.h - 60,
-      width: A4_PT.w - margin * 2,
-      title: `${palette.brand} ${palette.displayName} · ${options.pitchLabel}mm · ${rows.length} colors`,
+    bomPages = bomPageCount(rows.length, pagePt.h)
+    const rowsPerPage = bomRowsPerPage(pagePt.h)
+    for (let pageIndex = 0; pageIndex < bomPages; pageIndex++) {
+      sink.addPage(pagePt.w, pagePt.h)
+      const pageRows = rows.slice(pageIndex * rowsPerPage, (pageIndex + 1) * rowsPerPage)
+      const pageLabel = bomPages > 1 ? ` · 第 ${pageIndex + 1}/${bomPages} 页` : ''
+      drawBom(sink, pageRows, {
+        x: margin,
+        yTop: pagePt.h - 60,
+        width: pagePt.w - margin * 2,
+        title: `${printPaletteLabel(palette)} · ${options.pitchLabel} 毫米 · ${rows.length} 色 · 用量清单${pageLabel}`,
+        showSummary: pageIndex === bomPages - 1,
+        summary: { total: totalBeads(rows), colors: rows.length },
+      })
+    }
+  }
+
+  if (options.instructions ?? true) {
+    sink.addPage(pagePt.w, pagePt.h)
+    drawInstructions(sink, {
+      projectName: options.projectName,
+      sheetCount: pages.length,
+      overlap: layout.overlap,
+      pitchMm: options.pitchLabel,
+      orientation: layout.orientation ?? 'portrait',
+      widthMm: (scope.col1 - scope.col0) * options.pitchMm,
+      heightMm: (scope.row1 - scope.row0) * options.pitchMm,
     })
   }
 
-  if (options.instructions) {
-    sink.addPage(A4_PT.w, A4_PT.h)
-    drawInstructions(sink)
-  }
+  return { layout, sheetsDrawn: layout.sheets.length, bomPages, pages: sink.pageCount() }
+}
 
-  return { layout, sheetsDrawn: layout.sheets.length, pages: sink.pageCount() }
+function printPaletteLabel(palette: Palette): string {
+  return paletteDisplayLabel(palette).replace(/\bmm\b/gi, '毫米')
 }
 
 interface SheetDrawContext extends PaperPdfOptions {
   layout: DocumentLayout
   plan: ReturnType<typeof planAnnotations>
-  /** 本次导出覆盖的范围（全局坐标）。按板导出时就是那一块板 */
+  /** 本次导出覆盖的范围（全局坐标） */
   scope: { col0: number; row0: number; col1: number; row1: number }
   sheet: SheetRange
+  sourceSheet?: SheetRange
+  origin: { x: number; y: number }
+  fragmentLabel?: string
   index: number
   P: number
   margin: number
-}
-
-/** 本次导出的范围：选了几块板就是这几块板的外接框，否则整张图 */
-function exportScope(
-  grid: CellGrid,
-  boards?: BoardGeometry['boards'],
-): { col0: number; row0: number; col1: number; row1: number } {
-  if (!boards?.length) return { col0: 0, row0: 0, col1: grid.cols, row1: grid.rows }
-  let col0 = Number.POSITIVE_INFINITY
-  let row0 = Number.POSITIVE_INFINITY
-  let col1 = 0
-  let row1 = 0
-  for (const board of boards) {
-    col0 = Math.min(col0, board.c0)
-    row0 = Math.min(row0, board.r0)
-    col1 = Math.max(col1, board.c0 + board.cw)
-    row1 = Math.max(row1, board.r0 + board.rh)
-  }
-  return { col0, row0, col1, row1 }
+  pagePt: { w: number; h: number }
 }
 
 function drawSheet(sink: PdfSink, ctx: SheetDrawContext): void {
-  const { sheet, P, margin, grid, palette } = ctx
-  // ⚠️ 网格锚在【上边距】上：第 7.3 节的公式是 cellRect.y = PAGE_H - MARGIN - (r+1)*P，
-  //    也就是第 0 行贴着上边距，剩下的空边留在下方。锚在下方会把图案挪到纸的下半张。
-  const origin = { x: margin, y: A4_PT.h - margin - sheet.rows * P }
-  const total = ctx.layout.sheets.length
-  // 页序按【本次导出范围】算：第二块板的第一张纸不该有重叠带和裁切线
-  const firstInScope = sheet.col0 === ctx.scope.col0 && sheet.row0 === ctx.scope.row0
-
-  // 重叠带底色（浅蓝 30%）——不是本范围的第一页才有
-  if (!firstInScope && ctx.layout.overlap > 0) {
-    sink.opacity(0.3)
-    sink.fillColor(OVERLAP_TINT)
-    sink.rect(origin.x, origin.y, ctx.layout.overlap * P, sheet.rows * P)
-    sink.fill()
-    sink.opacity(1)
-  }
+  const { sheet, P, grid, palette, origin } = ctx
 
   // 底面
   sink.fillColor([0xfa, 0xfa, 0xf8])
@@ -176,97 +236,214 @@ function drawSheet(sink: PdfSink, ctx: SheetDrawContext): void {
 
   // 实体板定位线：黑色 10 格实线 + 5 格虚线十字
   strokeBoardGuides(sink, ctx.geom, sheet, origin, P)
-  strokeSheetSeams(sink, ctx, origin)
+  drawAssemblyGuides(sink, ctx, origin)
 
   // 坐标数字（全局列号 / 行号）
   drawCoordinates(sink, sheet, origin, P, 10)
 
-  // 色号（默认关）
+  // 色号：纸面版默认打开，保证垫板时每个区域都能找到对应色号
   if (ctx.layout.drawCodes) {
-    drawAnnotations(sink, grid, palette, ctx.plan, sheet, origin, P)
+    drawAnnotations(sink, grid, palette, ctx.plan, sheet, origin, P, {
+      ensureVisibleCodes: true,
+    })
   }
 
-  // 每块板左上角标一句"板 rXcY"
-  drawBoardLabels(sink, ctx, origin)
-
-  // 页眉
-  drawHeader(sink, ctx, total)
-
-  // 页脚校准尺 + 20 豆校验条
-  if (ctx.layout.drawRuler) drawRuler(sink, ctx, origin)
-
-  // 裁切线 + 对位十字：只有"这不是本次范围的第一页"才需要
-  if (!firstInScope) drawCropLineAndMarks(sink, ctx, origin)
+  if (ctx.fragmentLabel) {
+    drawCutOutline(sink, origin, sheet.cols * P, sheet.rows * P)
+    sink.setFont('cjk')
+    sink.fillColor([70, 70, 70])
+    sink.text(`${ctx.fragmentLabel}｜沿灰色虚线裁切`, origin.x, origin.y + sheet.rows * P + 11, 5.5, 'fill')
+    sink.setFont('latin')
+  }
 }
 
-/** 页缝：只在"右边还有内容"或"下边还有内容"的那条边上画蓝色虚线 */
-function strokeSheetSeams(
+/** 稀疏片段的剪裁边界；灰色虚线与红色重叠线区分开，剪刀沿这里走。 */
+function drawCutOutline(
   sink: PdfSink,
-  ctx: SheetDrawContext,
   origin: { x: number; y: number },
+  width: number,
+  height: number,
 ): void {
-  const { sheet, P } = ctx
-  const moreToRight = sheet.col0 + sheet.cols < ctx.scope.col1
-  const moreBelow = sheet.row0 + sheet.rows < ctx.scope.row1
-  sink.strokeColor(SHEET_SEAM.rgb)
-  sink.lineWidth(SHEET_SEAM.widthPt)
-  sink.dash([4, 3])
-  if (moreToRight) {
-    sink.moveTo(origin.x + sheet.cols * P, origin.y)
-    sink.lineTo(origin.x + sheet.cols * P, origin.y + sheet.rows * P)
-  }
-  if (moreBelow) {
-    sink.moveTo(origin.x, origin.y)
-    sink.lineTo(origin.x + sheet.cols * P, origin.y)
-  }
+  sink.strokeColor([135, 135, 135])
+  sink.lineWidth(0.65)
+  sink.dash([3, 2])
+  sink.rect(origin.x, origin.y, width, height)
   sink.stroke()
   sink.dash([])
 }
 
-function drawHeader(sink: PdfSink, ctx: SheetDrawContext, total: number): void {
-  const { sheet, P, grid } = ctx
-  const board = findBoard(ctx.geom, sheet)
-  // 页眉只印拉丁字符（第 11.4 节：v1 全程避开中文，保住矢量性）
-  const header = board
-    ? `Board ${board.index + 1} ${board.board} | Page ${ctx.index + 1}/${total} | cols ${sheet.col0}-${sheet.col0 + sheet.cols - 1} rows ${sheet.row0}-${sheet.row0 + sheet.rows - 1}`
-    : `Page ${ctx.index + 1}/${total} | cols ${sheet.col0}-${sheet.col0 + sheet.cols - 1} rows ${sheet.row0}-${sheet.row0 + sheet.rows - 1}`
-  sink.fillColor([0, 0, 0])
-  sink.text(header, ctx.margin, A4_PT.h - 6, 7, 'fill')
-  sink.text(
-    `${grid.cols}x${grid.rows} cells | pitch ${ctx.pitchLabel}mm | pitch field ${(ctx.grid.cols * ctx.pitchMm).toFixed(1)}x${(ctx.grid.rows * ctx.pitchMm).toFixed(1)}mm`,
-    ctx.margin,
-    A4_PT.h - 14.5,
-    5.5,
-    'fill',
-  )
-  void P
-}
+/**
+ * 用红色虚线标出纸页关系：
+ * - 右 / 下边缘：下一页从这里继续；
+ * - 左 / 上边缘：这是本页可裁掉的空白边；
+ * - 内侧红线：本页开头的重叠带到这里结束。
+ * 两张纸的红线相互对准，比凭纸边猜位置可靠。
+ */
+function drawAssemblyGuides(
+  sink: PdfSink,
+  ctx: SheetDrawContext,
+  origin: { x: number; y: number },
+): void {
+  const { sheet, sourceSheet = sheet, P, scope } = ctx
+  const overlap = Math.min(ctx.layout.overlap, sheet.cols - 1, sheet.rows - 1)
+  const previousCol = sourceSheet.col0 > scope.col0 && sheet.col0 <= sourceSheet.col0
+  const previousRow = sourceSheet.row0 > scope.row0 && sheet.row0 <= sourceSheet.row0
+  const nextCol =
+    sourceSheet.col0 + sourceSheet.cols < scope.col1 &&
+    sheet.col0 + sheet.cols >= sourceSheet.col0 + sourceSheet.cols
+  const nextRow =
+    sourceSheet.row0 + sourceSheet.rows < scope.row1 &&
+    sheet.row0 + sheet.rows >= sourceSheet.row0 + sourceSheet.rows
+  const height = sheet.rows * P
+  const width = sheet.cols * P
 
-/** 每块板的左上角写一句板号，拼的时候知道自己在拼哪块 */
-function drawBoardLabels(sink: PdfSink, ctx: SheetDrawContext, origin: { x: number; y: number }): void {
-  const { sheet, P } = ctx
-  sink.fillColor(gray255(0.35))
-  for (const board of ctx.geom.boards) {
-    const localCol = board.c0 - sheet.col0
-    const localRow = board.r0 - sheet.row0
-    if (localCol < 0 || localRow < 0) continue
-    if (localCol >= sheet.cols || localRow >= sheet.rows) continue
-    sink.text(
-      `Board ${board.index + 1}`,
-      origin.x + localCol * P + 1.5,
-      origin.y + (sheet.rows - localRow) * P - 5,
-      4.5,
-      'fill',
+  sink.strokeColor(SHEET_SEAM.rgb)
+  sink.lineWidth(SHEET_SEAM.widthPt)
+  sink.dash([4, 3])
+
+  if (nextCol) {
+    sink.moveTo(origin.x + width, origin.y)
+    sink.lineTo(origin.x + width, origin.y + height)
+    if (overlap > 0) {
+      sink.moveTo(origin.x + width - overlap * P, origin.y)
+      sink.lineTo(origin.x + width - overlap * P, origin.y + height)
+    }
+  }
+  if (previousCol) {
+    // 裁掉本页左侧的空白边，保留从这里开始的重叠内容。
+    sink.moveTo(origin.x, origin.y)
+    sink.lineTo(origin.x, origin.y + height)
+    if (overlap > 0) {
+      sink.moveTo(origin.x + overlap * P, origin.y)
+      sink.lineTo(origin.x + overlap * P, origin.y + height)
+    }
+  }
+  if (nextRow) {
+    sink.moveTo(origin.x, origin.y)
+    sink.lineTo(origin.x + width, origin.y)
+    if (overlap > 0) {
+      sink.moveTo(origin.x, origin.y + overlap * P)
+      sink.lineTo(origin.x + width, origin.y + overlap * P)
+    }
+  }
+  if (previousRow) {
+    // 本页顶部的重叠行放在上一页底部，顶部空白边可以裁掉。
+    sink.moveTo(origin.x, origin.y + height)
+    sink.lineTo(origin.x + width, origin.y + height)
+    if (overlap > 0) {
+      const y = origin.y + (sheet.rows - overlap) * P
+      sink.moveTo(origin.x, y)
+      sink.lineTo(origin.x + width, y)
+    }
+  }
+  sink.stroke()
+  sink.dash([])
+
+  if (overlap > 0 && (previousCol || previousRow || nextCol || nextRow)) {
+    drawRegistrationMarks(
+      sink,
+      origin,
+      width,
+      height,
+      P,
+      overlap,
+      previousCol,
+      previousRow,
+      nextCol,
+      nextRow,
     )
+    sink.setFont('cjk')
+    sink.fillColor(SHEET_SEAM.rgb)
+    if (previousCol) {
+      sink.text(`重叠 ${overlap} 列`, origin.x + overlap * P + 2, origin.y + height + 3, 4.5, 'fill')
+    }
+    if (previousRow) {
+      sink.text(`重叠 ${overlap} 行`, origin.x + 2, origin.y + (sheet.rows - overlap) * P - 2, 4.5, 'fill')
+    }
+    sink.setFont('latin')
   }
 }
 
-/**
- * 页脚校准尺（第 7.6 节）：
- *  1. 100mm 主标尺，每 10mm 一个刻度，50mm 加长，标 "100 mm"
- *  2. 20 格豆的针距校验条，标 "20 beads = 52.0 mm"
- * 比只印一个 10mm 方块准 10 倍：量 100mm 的误差是 ±0.5mm（0.5%），够发现打印机缩放 1%。
- */
+function drawRegistrationMarks(
+  sink: PdfSink,
+  origin: { x: number; y: number },
+  width: number,
+  height: number,
+  P: number,
+  overlap: number,
+  previousCol: boolean,
+  previousRow: boolean,
+  nextCol: boolean,
+  nextRow: boolean,
+): void {
+  const arm = Math.min(2.2 * PT_PER_MM, P * 0.72)
+  const cross = (x: number, y: number) => {
+    sink.moveTo(x - arm / 2, y)
+    sink.lineTo(x + arm / 2, y)
+    sink.moveTo(x, y - arm / 2)
+    sink.lineTo(x, y + arm / 2)
+  }
+
+  sink.strokeColor(SHEET_SEAM.rgb)
+  sink.lineWidth(0.6)
+  if (previousCol) {
+    const x = origin.x + (overlap * P) / 2
+    for (const ratio of [0.12, 0.5, 0.88]) cross(x, origin.y + height * ratio)
+  }
+  if (nextCol) {
+    const x = origin.x + width - (overlap * P) / 2
+    for (const ratio of [0.12, 0.5, 0.88]) cross(x, origin.y + height * ratio)
+  }
+  if (previousRow) {
+    const y = origin.y + height - (overlap * P) / 2
+    for (const ratio of [0.12, 0.5, 0.88]) cross(origin.x + width * ratio, y)
+  }
+  if (nextRow) {
+    const y = origin.y + (overlap * P) / 2
+    for (const ratio of [0.12, 0.5, 0.88]) cross(origin.x + width * ratio, y)
+  }
+  sink.stroke()
+}
+
+function drawHeader(sink: PdfSink, ctx: SheetDrawContext, page: PaperPage, total: number): void {
+  const { pagePt, layout } = ctx
+  const direction = layout.orientation === 'landscape' ? '横向' : '纵向'
+  const projectName = ctx.projectName?.trim().replace(/\s+/g, ' ').slice(0, 28)
+  const title = projectName ? `《${projectName}》· ` : ''
+  const header = `${title}打印纸样｜第 ${ctx.index + 1}/${total} 页｜${direction}`
+  const fragments = page.fragments
+  const range =
+    fragments.length === 1
+      ? `本页范围：第 ${fragments[0].range.col0 + 1}—${fragments[0].range.col0 + fragments[0].range.cols} 列，第 ${fragments[0].range.row0 + 1}—${fragments[0].range.row0 + fragments[0].range.rows} 行｜每格 ${ctx.pitchLabel} 毫米`
+      : `本页含 ${fragments.length} 个纸样片段｜片段号：${fragments.map((fragment) => fragment.sourceIndex + 1).join('、')}｜请按编号剪下、拼接`
+  const boards = new Set<number>()
+  for (const fragment of fragments) {
+    for (const board of ctx.geom.boards) {
+      if (
+        board.c0 < fragment.source.col0 + fragment.source.cols &&
+        board.c0 + board.cw > fragment.source.col0 &&
+        board.r0 < fragment.source.row0 + fragment.source.rows &&
+        board.r0 + board.rh > fragment.source.row0
+      ) {
+        boards.add(board.index + 1)
+      }
+    }
+  }
+  const boardLine = boards.size > 0 ? `本页底板：${[...boards].join('、')}` : ''
+  sink.setFont('cjk')
+  sink.fillColor([0, 0, 0])
+  sink.text(header, ctx.margin, pagePt.h - 6, 7, 'fill')
+  sink.text(range, ctx.margin, pagePt.h - 14.5, 5.5, 'fill')
+  if (fragments.length === 1 && fragments[0].showLabel) {
+    sink.text(`纸样片段：${fragments[0].sourceIndex + 1}｜请沿灰色虚线裁切`, ctx.margin, pagePt.h - 23, 5, 'fill')
+    if (boardLine) sink.text(boardLine, ctx.margin, pagePt.h - 31, 5, 'fill')
+  } else if (boardLine) {
+    sink.text(boardLine, ctx.margin, pagePt.h - 23, 5, 'fill')
+  }
+  sink.setFont('latin')
+}
+
+/** 页脚校准尺：量 100 毫米比量一格更容易发现打印缩放。 */
 function drawRuler(
   sink: PdfSink,
   ctx: SheetDrawContext,
@@ -294,126 +471,104 @@ function drawRuler(
     }
   }
   sink.stroke()
+  sink.setFont('cjk')
   sink.fillColor([0, 0, 0])
   sink.text(
-    `${RULER_MM} mm - measure this. Print at 100% / actual size, turn OFF "fit to page".`,
+    `${RULER_MM} 毫米校准尺：应量到 ${RULER_MM}.0 毫米，打印请选 100% / 实际大小`,
     origin.x,
     baseY + 7.5,
     4.6,
     'fill',
   )
 
-  // 20 豆校验条
+  // 20 颗豆的针距校验条；5mm 针距在窄边 A4 上放不下时只保留文字提示。
   const stripX = origin.x + RULER_PT + 24
   const stripWidth = BEAD_STRIP_CELLS * P
-  sink.lineWidth(0.6)
-  sink.moveTo(stripX, baseY)
-  sink.lineTo(stripX + stripWidth, baseY)
-  sink.stroke()
-  for (let cell = 0; cell <= BEAD_STRIP_CELLS; cell++) {
-    const x = stripX + cell * P
-    sink.moveTo(x, baseY)
-    sink.lineTo(x, tickTop)
+  const canDrawStrip = stripX + stripWidth <= ctx.pagePt.w - ctx.margin
+  if (canDrawStrip) {
+    sink.lineWidth(0.6)
+    sink.moveTo(stripX, baseY)
+    sink.lineTo(stripX + stripWidth, baseY)
+    sink.stroke()
+    for (let cell = 0; cell <= BEAD_STRIP_CELLS; cell++) {
+      const x = stripX + cell * P
+      sink.moveTo(x, baseY)
+      sink.lineTo(x, tickTop)
+    }
+    sink.stroke()
+    sink.fillColor([0, 0, 0])
+    sink.text(
+      `${BEAD_STRIP_CELLS} 颗豆 = ${(BEAD_STRIP_CELLS * pitchMm).toFixed(1)} 毫米`,
+      stripX,
+      baseY + 7.5,
+      4.6,
+      'fill',
+    )
+  } else {
+    sink.fillColor([0, 0, 0])
+    sink.text(`每颗豆间距 ${pitchMm.toFixed(1)} 毫米`, stripX, baseY + 7.5, 4.6, 'fill')
   }
-  sink.stroke()
-  sink.fillColor([0, 0, 0])
-  sink.text(
-    `${BEAD_STRIP_CELLS} beads = ${(BEAD_STRIP_CELLS * pitchMm).toFixed(1)} mm`,
-    stripX,
-    baseY + 7.5,
-    4.6,
-    'fill',
-  )
+  sink.setFont('latin')
 }
 
-/**
- * 裁切线 + 对位十字（第 7.7 节）。
- * 裁切线在第 2 页起的左边距上：裁掉空白边距，让纸边正好落在上一页的重叠带上。
- * 对位十字在重叠带里：上、中、下各一个，臂长 3mm。
- */
-function drawCropLineAndMarks(
-  sink: PdfSink,
-  ctx: SheetDrawContext,
-  origin: { x: number; y: number },
-): void {
-  const { sheet, P } = ctx
-  const height = sheet.rows * P
-  const arm = 3 * PT_PER_MM
-  const bandWidth = ctx.layout.overlap * P
-
-  sink.strokeColor(SHEET_SEAM.rgb)
-  sink.lineWidth(0.5)
-  sink.dash([3, 2])
-  sink.moveTo(origin.x, origin.y)
-  sink.lineTo(origin.x, origin.y + height)
-  sink.stroke()
-  sink.dash([])
-  sink.fillColor([0, 0, 0])
-  sink.text('CUT HERE', origin.x + 1.5, origin.y + height - 8, 4.6, 'fill')
-
-  // 对位十字：三个，落在重叠带中央
-  const cx = origin.x + bandWidth / 2
-  const ys = [origin.y + height * 0.06, origin.y + height * 0.5, origin.y + height * 0.94]
-  sink.strokeColor([0, 0, 0])
-  sink.lineWidth(0.5)
-  for (const cy of ys) {
-    sink.moveTo(cx - arm / 2, cy)
-    sink.lineTo(cx + arm / 2, cy)
-    sink.moveTo(cx, cy - arm / 2)
-    sink.lineTo(cx, cy + arm / 2)
-  }
-  sink.stroke()
+export interface PaperInstructionOptions {
+  projectName?: string
+  sheetCount?: number
+  overlap?: number
+  pitchMm?: number
+  orientation?: PaperOrientation
+  widthMm?: number
+  heightMm?: number
 }
 
-/** 找出这一页覆盖的是哪块板（按它的起点落在页内判定） */
-function findBoard(geom: BoardGeometry, sheet: SheetRange) {
-  return geom.boards.find(
-    (board) =>
-      board.c0 >= sheet.col0 &&
-      board.c0 < sheet.col0 + sheet.cols &&
-      board.r0 >= sheet.row0 &&
-      board.r0 < sheet.row0 + sheet.rows,
-  )
-}
+/** 打印 PDF 最后一页的中文使用说明。 */
+export function drawInstructions(sink: PdfSink, options: PaperInstructionOptions = {}): void {
+  const direction = options.orientation === 'landscape' ? '横向' : '纵向'
+  const projectName = options.projectName?.trim().replace(/\s+/g, ' ').slice(0, 32)
+  const title = projectName ? `《${projectName}》打印使用说明` : '打印使用说明'
+  const overlap = Math.max(0, options.overlap ?? OVERLAP_CELLS)
+  const sheetCount = options.sheetCount ?? 0
+  const pitch = options.pitchMm ?? 0
+  const overlapHint = overlap === 2 ? '（约两颗豆）' : overlap === 3 ? '（约三颗豆）' : ''
+  const size =
+    options.widthMm && options.heightMm
+      ? `成品外接尺寸约 ${options.widthMm.toFixed(1)} × ${options.heightMm.toFixed(1)} 毫米。`
+      : ''
 
-/**
- * 拼接说明页（第 7.5 节）。v1 的 PDF 里只能写拉丁字符，
- * 中文的操作说明在导出面板里给用户看。
- */
-export function drawInstructions(sink: PdfSink): void {
-  const lines = [
-    'HOW TO PRINT AND TAPE THE PAGES TOGETHER',
-    '',
-    '1. Print at 100% / Actual size. Turn OFF every "fit to page" / "scale to fit" option.',
-    '2. Print page 1 first. Measure the 100 mm ruler at the bottom of the page.',
-    '   It must be exactly 100.0 mm. If not, the printer is scaling: fix the settings',
-    '   or use another printer.',
-    '3. For page 2 and later: cut off the left blank margin along the dashed "CUT HERE" line.',
-    '4. Put the left edge of page k+1 on top of the right part of page k, so the columns',
-    '   shared by both pages overlap. Matching colors is the best alignment guide.',
-    '5. Check the registration crosses in the overlap band: all crosses must line up',
-    '   with the pixels underneath.',
-    '6. Tape the pages. Trim the excess paper on the right side of page k.',
-    '',
-    'WHY OVERLAP INSTEAD OF BUTT-JOINING:',
-    'Cutting paper by hand gives about +/-0.5 mm error. Over 176 pages that becomes 8 mm',
-    '(3 beads). The overlap band makes every page align to what the previous page',
-    'ACTUALLY printed, not to an ideal position. So the error never accumulates.',
-    '',
-    'COLOR CODES:',
-    'Big regions are labelled once in the middle with the bead code, and every cell on the',
-    'boundary is labelled cell by cell, so you know exactly where to switch color.',
-    'When a code does not fit inside a cell, a 1-2 digit number is printed instead and the',
-    'bill of materials page maps numbers back to codes.',
+  const lines: Array<{ text: string; size: number; gapAfter?: number }> = [
+    { text: title, size: 16, gapAfter: 14 },
+    { text: `这份纸样共 ${sheetCount} 页图纸，纸张为 A4，自动采用${direction}。${size}`, size: 9 },
+    { text: `每格针距为 ${pitch.toFixed(1)} 毫米；按 1:1 打印后，一格对应一颗豆。`, size: 9, gapAfter: 10 },
+    { text: '一、打印设置', size: 11, gapAfter: 4 },
+    { text: '1. 打印纸张选择 A4，方向按每页页眉写的“横向”或“纵向”。', size: 9 },
+    { text: '2. 缩放选择“100%”或“实际大小”，不要选择“适合页面”“缩放到可打印区域”。', size: 9 },
+    { text: '3. 第一页打印后，先用页脚的 100 毫米校准尺测量。必须是 100.0 毫米；不准确就调整打印机缩放。', size: 9, gapAfter: 10 },
+    { text: '二、纸页编号和拼接顺序', size: 11, gapAfter: 4 },
+    { text: '1. 每页页眉都有“第 X/Y 页”和本页列、行范围。先找第 1 页，再按页码顺序整理。', size: 9 },
+    { text: '2. 页码从左到右、从上到下排列：先把同一排的纸横向拼好，再把各排从上到下拼起来。', size: 9 },
+    { text: `3. 每次相邻纸页共享 ${overlap} 格${overlapHint}内容。下一页的重叠部分要盖住上一页对应的颜色和格线。`, size: 9 },
+    { text: '4. 同一张 A4 上若有多个“纸样片段”，先按片段编号沿灰色虚线剪下，再按页眉的列、行范围定位。', size: 9 },
+    { text: '5. 先把红色对位十字和相同颜色格子对齐，再从纸背面贴胶带；不要让重叠区产生错位。', size: 9, gapAfter: 10 },
+    { text: '三、红线和裁切线怎么看', size: 11, gapAfter: 4 },
+    { text: '1. 红色虚线表示相邻纸页的连接位置，红线围出的部分就是重叠区，不是要删除的图案。', size: 9 },
+    { text: '2. 下一页开头的红线要对准上一页末端的红线；红色十字也要上下、左右重合。', size: 9 },
+    { text: '3. 只裁掉图案外的空白边，保留重叠区里的颜色、格线和红色对位标记。边缘多出的空白纸，贴好后再裁掉。', size: 9, gapAfter: 10 },
+    { text: '四、色号怎么看', size: 11, gapAfter: 4 },
+    { text: '1. 大片连续同色区域：中间印一个较大的色号，外围一圈格子逐格印色号，换色时看边界圈。', size: 9 },
+    { text: '2. 小片或零散区域：每一格都会印色号。格子太小放不下完整色号时，改印短编号，最后的色用量清单有对应关系。', size: 9 },
+    { text: '3. 最后一页是色用量清单，包含色块、色号、名称、色卡值和需要的颗数；按它准备材料。', size: 9, gapAfter: 10 },
+    { text: '五、开始拼豆', size: 11, gapAfter: 4 },
+    { text: '把拼好的整张纸样垫在透明底板下面，一格对一格，从上到下、从左到右放豆。底板边框和纸样边界对齐后再开始。', size: 9 },
   ]
+
+  sink.setFont('cjk')
   sink.fillColor([0, 0, 0])
-  let y = A4_PT.h - 60
-  sink.text(lines[0], 40, y, 12, 'fill')
-  y -= 8
-  for (const line of lines.slice(1)) {
-    sink.text(line, 40, y, line === '' ? 6 : 8.5, 'fill')
-    y -= line === '' ? 6 : 11
+  let y = sink.pageHeight - 44
+  for (const line of lines) {
+    sink.text(line.text, 40, y, line.size, 'fill')
+    y -= line.size * 1.45 + (line.gapAfter ?? 0)
   }
+  sink.setFont('latin')
 }
 
 export { EMPTY, BOARD_GUIDE, BOARD_GUIDE_DASH, SHEET_SEAM }

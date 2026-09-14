@@ -2,7 +2,6 @@ import { useState } from 'react'
 
 import { useEditor } from '../editor/store'
 import { t } from '../i18n/zh'
-import { navigate } from '../router'
 import { putProject } from '../storage/db'
 import { Btn, Field, INPUT_CLS, Modal } from './ui'
 
@@ -32,7 +31,6 @@ export default function NewProjectDialog({
       await putProject(useEditor.getState().toProject())
       setName('')
       onClose()
-      navigate('editor')
     } finally {
       setBusy(false)
     }

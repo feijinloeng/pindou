@@ -18,12 +18,29 @@ export interface PaletteFile {
 }
 
 export const PALETTE_FILE = raw as unknown as PaletteFile
+const PALETTE_PRIORITY = ['mard-221', 'mard-291']
 export const PALETTES: Palette[] = PALETTE_FILE.palettes
+  .map((palette, index) => ({ palette, index }))
+  .sort((a, b) => {
+    const aPriority = PALETTE_PRIORITY.indexOf(a.palette.id)
+    const bPriority = PALETTE_PRIORITY.indexOf(b.palette.id)
+    const aIsPriority = aPriority >= 0
+    const bIsPriority = bPriority >= 0
+
+    if (aIsPriority || bIsPriority) {
+      if (!aIsPriority) return 1
+      if (!bIsPriority) return -1
+      return aPriority - bPriority
+    }
+
+    return b.palette.colors.length - a.palette.colors.length || a.index - b.index
+  })
+  .map(({ palette }) => palette)
 export const DISCLAIMER = PALETTE_FILE.disclaimer
 export const TRADEMARKS = PALETTE_FILE.trademarks
 export const ATTRIBUTION = PALETTE_FILE.attribution
 
-export const DEFAULT_PALETTE_ID = 'mard-291'
+export const DEFAULT_PALETTE_ID = 'mard-221'
 
 /** 找不到就返回 null。导入工程时必须能区分“没有这套色板”和“就用第一套” */
 export function findPalette(id: unknown): Palette | null {

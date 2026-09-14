@@ -5,23 +5,21 @@ import { create } from 'zustand'
  * 不进工程文件（Project schema v1 不加字段），换工程只保留明确说是偏好的部分。
  *
  * 动效偏好持久化到 localStorage（键 pindou.ui）；
- * 面板查询等会话数据刷新即丢。
+ * 面板筛选等会话数据刷新即丢。
  */
 
 export type MotionPref = 'system' | 'reduced'
-export type ColorFilter = 'used' | 'all' | 'free'
+export type ColorFilter = 'used' | 'all'
+export type ColorOrder = 'name' | 'color'
 
 interface UiState {
   motion: MotionPref
-  /** 色号面板的会话状态：同一次工程 session 里切面板不丢 */
-  colorQuery: string
   colorFilter: ColorFilter | null
-  colorSettingsOpen: boolean
+  colorOrder: ColorOrder
 
   setMotion(motion: MotionPref): void
-  setColorQuery(query: string): void
   setColorFilter(filter: ColorFilter | null): void
-  setColorSettingsOpen(open: boolean): void
+  setColorOrder(order: ColorOrder): void
   /** 换工程时清掉会话级的面板状态（保留 pin 等显式偏好） */
   resetSession(): void
 }
@@ -53,28 +51,23 @@ const initialPrefs = typeof localStorage === 'undefined' ? { motion: 'system' as
 
 export const useUi = create<UiState>((set) => ({
   motion: initialPrefs.motion,
-  colorQuery: '',
   colorFilter: null,
-  colorSettingsOpen: false,
+  colorOrder: 'color',
 
   setMotion(motion) {
     savePrefs(motion)
     set({ motion })
   },
-  setColorQuery(colorQuery) {
-    set({ colorQuery })
-  },
   setColorFilter(colorFilter) {
     set({ colorFilter })
   },
-  setColorSettingsOpen(colorSettingsOpen) {
-    set({ colorSettingsOpen })
+  setColorOrder(colorOrder) {
+    set({ colorOrder })
   },
   resetSession() {
     set({
-      colorQuery: '',
       colorFilter: null,
-      colorSettingsOpen: false,
+      colorOrder: 'color',
     })
   },
 }))

@@ -57,6 +57,7 @@ export function Btn({
   title,
   variant = 'secondary',
   wide,
+  className,
   type = 'button',
 }: {
   children: ReactNode
@@ -67,6 +68,7 @@ export function Btn({
   title?: string
   variant?: BtnVariant
   wide?: boolean
+  className?: string
   type?: 'button' | 'submit'
 }) {
   const { ref: inner, handlers } = usePressFeedback()
@@ -80,7 +82,7 @@ export function Btn({
       {...handlers}
       className={`${BTN_BASE} ${BTN_VARIANTS[variant]} ${wide ? 'w-full' : ''} ${
         active ? 'border-accent bg-accent text-on-accent' : ''
-      }`}
+      } ${className ?? ''}`}
     >
       <span ref={inner} className="inline-flex items-center gap-1.5">
         {children}
@@ -105,7 +107,7 @@ export function Tip({
       {children}
       <span
         role="tooltip"
-        className={`pointer-events-none absolute left-1/2 hidden -translate-x-1/2 rounded-md bg-ink px-2 py-1 text-xs whitespace-nowrap text-surface opacity-0 shadow-md transition-opacity group-hover/tip:block group-hover/tip:opacity-100 group-hover/tip:delay-[500ms] group-focus-within/tip:block group-focus-within/tip:opacity-100 group-focus-within/tip:delay-0 ${
+        className={`pointer-events-none absolute left-1/2 hidden -translate-x-1/2 rounded-md bg-ink px-2 py-1 text-xs whitespace-nowrap text-surface opacity-0 shadow-md transition-opacity group-hover/tip:block group-hover/tip:opacity-100 group-hover/tip:delay-[500ms] group-focus-visible/tip:block group-focus-visible/tip:opacity-100 group-focus-visible/tip:delay-0 ${
           placement === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'
         }`}
       >
@@ -287,6 +289,7 @@ export function Menu({
   width = 'w-64',
   triggerVariant = 'secondary',
   placement = 'bottom',
+  compact = false,
 }: {
   label: ReactNode
   title?: string
@@ -295,6 +298,8 @@ export function Menu({
   width?: string
   triggerVariant?: BtnVariant
   placement?: 'top' | 'bottom'
+  /** 紧凑的图标触发器，适合叠在卡片或图片角落 */
+  compact?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const close = () => setOpen(false)
@@ -333,7 +338,7 @@ export function Menu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className={`${BTN_BASE} ${open ? 'border-accent bg-accent text-on-accent' : BTN_VARIANTS[triggerVariant]}`}
+        className={`${compact ? 'inline-flex h-8 w-8 items-center justify-center rounded-lg border p-0 select-none' : BTN_BASE} ${open ? 'border-accent bg-accent text-on-accent' : BTN_VARIANTS[triggerVariant]}`}
       >
         {label}
       </button>

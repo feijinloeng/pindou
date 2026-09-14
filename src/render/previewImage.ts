@@ -1,10 +1,10 @@
 import { boardGuide, type BoardGeometry } from '../domain/board'
 import { EMPTY, isPlaceable, type CellGrid } from '../domain/grid'
-import { type Palette, shadeHex } from '../domain/palette'
+import { type Palette } from '../domain/palette'
 
 /**
  * 预览图（第 11.1 节）：给客户看"像不像"的普通位图。
- * 渲染成**圆豆 + 孔 + 底板底色**，不是方格 —— 客户得看到成品的样子。
+ * 每格直接填满色块，避免高像素预览中密集圆豆和豆孔造成视觉噪点。
  */
 export const PREVIEW_SCALES = { standard: 8, hd: 16, print: 32 } as const
 export type PreviewScale = keyof typeof PREVIEW_SCALES
@@ -44,43 +44,28 @@ export function planPreview(grid: CellGrid, pxPerCell: number): PreviewPlan {
 }
 
 /**
- * 画预览图。豆是圆，孔是更暗的同色圆，空格留底板底色。
- * 逐格 arc：4000×4000 的图大约 25 万颗豆，1-2 秒能画完。
+ * 画预览图。每个有色格直接铺满对应色块，空格留底板底色。
+ * 逐格 fillRect 比逐格 arc 更轻量，也能让高像素预览保持干净。
  */
 export function drawPreview(ctx: CanvasRenderingContext2D, options: PreviewOptions): PreviewPlan {
   const { grid, palette } = options
   const plan = planPreview(grid, options.pxPerCell)
   const z = plan.pxPerCell
-  const beadRadius = z * 0.46
-  const holeRadius = z * 0.22
-  const drawHoles = z >= 6
 
   ctx.canvas.width = plan.width
   ctx.canvas.height = plan.height
   ctx.fillStyle = PEGBOARD_BG
   ctx.fillRect(0, 0, plan.width, plan.height)
 
-  const holeColors = palette.colors.map((c) => shadeHex(c.hex, 0.68))
-
   for (let y = 0; y < grid.rows; y++) {
-    const cy = (y + 0.5) * z
     for (let x = 0; x < grid.cols; x++) {
       const index = y * grid.cols + x
       const value = grid.cells[index]
       if (value === EMPTY || !isPlaceable(grid, index)) continue
       const color = palette.colors[value]
       if (!color) continue
-      const cx = (x + 0.5) * z
       ctx.fillStyle = color.hex
-      ctx.beginPath()
-      ctx.arc(cx, cy, beadRadius, 0, Math.PI * 2)
-      ctx.fill()
-      if (drawHoles) {
-        ctx.fillStyle = holeColors[value]
-        ctx.beginPath()
-        ctx.arc(cx, cy, holeRadius, 0, Math.PI * 2)
-        ctx.fill()
-      }
+      ctx.fillRect(x * z, y * z, z, z)
     }
   }
 

@@ -1,37 +1,32 @@
-import { useMemo, useState } from 'react'
-import { ArrowLeft, Check, GearSix, MagnifyingGlass, X } from '@phosphor-icons/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { CaretDown, Check } from '@phosphor-icons/react'
 
 import { usageByIndex } from '../domain/grid'
-import { labelTextColor } from '../domain/palette'
-import { DISCLAIMER, PALETTES, TRADEMARKS } from '../data/palettes'
+import { labelTextColor, type Palette } from '../domain/palette'
+import { PALETTES } from '../data/palettes'
 import { useEditor } from '../editor/store'
-import { useUi, type ColorFilter } from '../editor/uiState'
+import { useUi, type ColorFilter, type ColorOrder } from '../editor/uiState'
 import { t } from '../i18n/zh'
+import { useOverlayEscape, Z } from './overlayState'
 
-/**
- * 色号面板（spec 5.7）：浏览 / 设置两个子视图。
- *
- * 白名单语义（spec 2.3.1）：allowedCodes 是「允许使用的色号」，null = 全部可用。
- * 被排除 = 白名单存在且不含它。旧代码把名单里的条目当成被排除的，正好反了。
- */
+/** 色号面板：选择器固定在顶部，下面直接浏览和选择色号。 */
 export default function ColorList() {
-  const settingsOpen = useUi((s) => s.colorSettingsOpen)
-  return settingsOpen ? <ColorSettings /> : <ColorBrowse />
+  return <ColorBrowse />
 }
 
 /* ---------- 浏览子视图 ---------- */
 
 function ColorBrowse() {
   const palette = useEditor((s) => s.palette)
+  const paletteId = useEditor((s) => s.paletteId)
   const allowedCodes = useEditor((s) => s.allowedCodes)
   const grid = useEditor((s) => s.grid)
   const version = useEditor((s) => s.commitVersion)
   const colorIndex = useEditor((s) => s.colorIndex)
-  const query = useUi((s) => s.colorQuery)
-  const setQuery = useUi((s) => s.setColorQuery)
   const filter = useUi((s) => s.colorFilter)
   const setFilter = useUi((s) => s.setColorFilter)
-  const setSettingsOpen = useUi((s) => s.setColorSettingsOpen)
+  const colorOrder = useUi((s) => s.colorOrder)
+  const setColorOrder = useUi((s) => s.setColorOrder)
   // 动作是稳定引用，不需要订阅
   const a = useEditor.getState()
   const copy = t('editor')
@@ -47,96 +42,49 @@ function ColorBrowse() {
   const activeFilter: ColorFilter = filter ?? (anyUsed ? 'used' : 'all')
 
   const isExcluded = (code: string) => allowedCodes !== null && !allowedCodes.includes(code)
-  const active = palette.colors[colorIndex]
-  const activeUsage = usage[colorIndex] ?? 0
 
   const shown = palette.colors
     .map((color, i) => ({ color, i }))
-    .filter(({ color, i }) => {
+    .filter(({ i }) => {
       if (activeFilter === 'used' && usage[i] === 0) return false
-      if (activeFilter === 'free' && isExcluded(color.code)) return false
-      const needle = query.trim().toLowerCase()
-      if (!needle) return true
-      return (
-        color.code.toLowerCase().includes(needle) ||
-        color.name.toLowerCase().includes(needle) ||
-        color.hex.toLowerCase().includes(needle)
-      )
+      return true
     })
+    .sort((a, b) => compareColors(a.color, b.color, colorOrder))
 
   return (
     <>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {active && (
-          <div className="flex items-center gap-2 border-b border-line px-3 py-2">
-            <span
-              className="h-9 w-9 shrink-0 rounded-lg border border-line"
-              style={{ backgroundColor: active.hex }}
-            />
-            <div className="min-w-0 text-sm">
-              <p className="truncate font-medium">
-                {active.code} · {active.name}
-              </p>
-              <p className="truncate text-xs text-ink-2 tabular">
-                {active.hex} · {copy.colorUsedCount} {activeUsage} 颗
-                {isExcluded(active.code) && `（${copy.colorExcluded}）`}
-              </p>
-            </div>
-          </div>
-        )}
+        <div className="border-b border-line px-3 py-2">
+          <PalettePicker
+            palette={palette}
+            paletteId={paletteId}
+            ariaLabel={copy.colors}
+            onSelect={(id) => a.setPalette(id)}
+          />
+        </div>
 
-        <div className="flex flex-col gap-2 px-3 py-2">
-          <div className="relative">
-            <MagnifyingGlass
-              size={12}
-              aria-hidden
-              className="absolute top-1/2 left-2 -translate-y-1/2 text-ink-2"
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={copy.colorSearch}
-              aria-label={copy.colorSearch}
-              className="w-full rounded-lg border border-line bg-surface py-1.5 pr-7 pl-7 text-sm text-ink placeholder:text-ink-2/60"
-            />
-            {query && (
-              <button
-                type="button"
-                aria-label={copy.clearQuery}
-                onClick={() => setQuery('')}
-                className="absolute top-1/2 right-1.5 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-ink-2 hover:bg-hover"
-              >
-                <X size={10} aria-hidden />
-              </button>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-1 text-xs">
-            {(
-              [
-                ['used', copy.colorUsed],
-                ['all', copy.colorAll],
-                ['free', copy.colorFree],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                aria-pressed={activeFilter === id}
-                onClick={() => setFilter(id)}
-                className={`rounded-lg border px-2 py-1 ${
-                  activeFilter === id
-                    ? 'border-accent bg-accent text-on-accent'
-                    : 'border-line text-ink-2 hover:bg-hover'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-            <span className="ml-auto self-center text-ink-2 tabular">
-              {shown.length}/{palette.colors.length}
-            </span>
-          </div>
+        <div className="flex flex-wrap gap-1 px-3 py-2 text-xs">
+          {(
+            [
+              ['all', copy.colorAll],
+              ['used', copy.colorUsed],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={activeFilter === id}
+              onClick={() => setFilter(id)}
+              className={`rounded-lg border px-2 py-1 ${
+                activeFilter === id
+                  ? 'border-accent bg-accent text-on-accent'
+                  : 'border-line text-ink-2 hover:bg-hover'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <ColorOrderPicker value={colorOrder} ariaLabel={copy.colorOrder} onSelect={setColorOrder} />
         </div>
 
         <SwatchGrid
@@ -148,129 +96,224 @@ function ColorBrowse() {
         />
         {shown.length === 0 && <p className="px-3 pb-3 text-xs text-ink-2">{copy.colorNone}</p>}
       </div>
-
-      <footer className="shrink-0 border-t border-line p-2">
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-line text-sm text-ink hover:bg-hover"
-        >
-          <GearSix size={14} aria-hidden />
-          {copy.colorLibrary}
-        </button>
-      </footer>
     </>
   )
 }
 
-/* ---------- 设置子视图 ---------- */
+const COLOR_NAME_COLLATOR = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
+const NEUTRAL_CHROMA = 8
 
-function ColorSettings() {
-  const palette = useEditor((s) => s.palette)
-  const paletteId = useEditor((s) => s.paletteId)
-  const allowedCodes = useEditor((s) => s.allowedCodes)
-  const grid = useEditor((s) => s.grid)
-  const version = useEditor((s) => s.commitVersion)
-  const setSettingsOpen = useUi((s) => s.setColorSettingsOpen)
-  const a = useEditor.getState()
+function compareColors(
+  a: Palette['colors'][number],
+  b: Palette['colors'][number],
+  order: ColorOrder,
+): number {
+  if (order === 'name') {
+    return COLOR_NAME_COLLATOR.compare(a.name, b.name) || COLOR_NAME_COLLATOR.compare(a.code, b.code)
+  }
+
+  const aChroma = Math.hypot(a.lab[1], a.lab[2])
+  const bChroma = Math.hypot(b.lab[1], b.lab[2])
+  const aNeutral = aChroma < NEUTRAL_CHROMA
+  const bNeutral = bChroma < NEUTRAL_CHROMA
+  if (aNeutral !== bNeutral) return aNeutral ? -1 : 1
+
+  // 颜色模式按色相聚拢，组内再由深到浅，接近调色盘的连续色带。
+  if (!aNeutral || !bNeutral) {
+    const aHue = labHue(a.lab[1], a.lab[2])
+    const bHue = labHue(b.lab[1], b.lab[2])
+    const hue = aHue - bHue
+    if (Math.abs(hue) > 0.001) return hue
+  }
+
+  return a.lab[0] - b.lab[0] || aChroma - bChroma || COLOR_NAME_COLLATOR.compare(a.code, b.code)
+}
+
+function labHue(a: number, b: number): number {
+  const degrees = (Math.atan2(b, a) * 180) / Math.PI
+  return degrees < 0 ? degrees + 360 : degrees
+}
+
+function ColorOrderPicker({
+  value,
+  ariaLabel,
+  onSelect,
+}: {
+  value: ColorOrder
+  ariaLabel: string
+  onSelect: (order: ColorOrder) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const copy = t('editor')
-  const [managing, setManaging] = useState(false)
+  const options: Array<{ id: ColorOrder; label: string }> = [
+    { id: 'name', label: copy.colorOrderByName },
+    { id: 'color', label: copy.colorOrderByColor },
+  ]
+  const currentLabel = options.find((option) => option.id === value)?.label ?? options[0].label
 
-  const usage = useMemo(
-    () => usageByIndex(grid, palette.colors.length),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [grid, palette, version],
-  )
-  const usedCount = usage.reduce((n, v) => n + (v > 0 ? 1 : 0), 0)
-  const isExcluded = (code: string) => allowedCodes !== null && !allowedCodes.includes(code)
-  const excludedCount = allowedCodes === null ? 0 : palette.colors.length - allowedCodes.length
-  const availableCount = palette.colors.length - excludedCount
+  useOverlayEscape(open, () => setOpen(false))
+
+  useEffect(() => {
+    if (!open) return
+    const closeWhenOutside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !pickerRef.current?.contains(event.target)) {
+        setOpen(false)
+      }
+    }
+    window.addEventListener('pointerdown', closeWhenOutside)
+    return () => window.removeEventListener('pointerdown', closeWhenOutside)
+  }, [open])
 
   return (
-    <>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex flex-col gap-3 p-3">
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(false)}
-            className="flex items-center gap-1 self-start text-sm text-ink-2 hover:text-ink"
-          >
-            <ArrowLeft size={12} aria-hidden />
-            {copy.colorBack}
-          </button>
+    <div ref={pickerRef} className="relative ml-auto min-w-0">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-7 max-w-28 items-center gap-1 rounded-lg border border-line bg-surface px-2 text-xs text-ink hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+      >
+        <span className="min-w-0 flex-1 truncate">{currentLabel}</span>
+        <CaretDown
+          size={13}
+          weight="bold"
+          aria-hidden
+          className={`shrink-0 text-ink transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
 
-          <label className="flex flex-col gap-1 text-sm text-ink-2">
-            {copy.colors}
-            <select
-              className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
-              value={paletteId}
-              aria-label={copy.colors}
-              onChange={(e) => a.setPalette(e.target.value)}
-            >
-              {PALETTES.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.displayName} · {p.colors.length} 色
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <p className="text-sm text-ink-2 tabular">
-            {copy.colorUsedCount} {usedCount} · {copy.colorAvailable} {availableCount} ·{' '}
-            {copy.colorExcluded} {excludedCount}
-          </p>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              aria-pressed={managing}
-              onClick={() => setManaging(!managing)}
-              className={`rounded-lg border px-3 py-1.5 text-sm ${
-                managing
-                  ? 'border-accent bg-accent text-on-accent'
-                  : 'border-line text-ink hover:bg-hover'
-              }`}
-            >
-              {managing ? copy.colorManageOn : copy.colorManage}
-            </button>
-            {allowedCodes !== null && (
+      {open && (
+        <div
+          role="listbox"
+          aria-label={ariaLabel}
+          className="absolute top-full right-0 z-30 mt-1 min-w-28 rounded-xl border border-line bg-surface p-1 shadow-lg"
+          style={{ zIndex: Z.menu }}
+        >
+          {options.map((option) => {
+            const selected = option.id === value
+            return (
               <button
+                key={option.id}
                 type="button"
-                onClick={a.restoreAllCodes}
-                className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink hover:bg-hover"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onSelect(option.id)
+                  setOpen(false)
+                  triggerRef.current?.focus()
+                }}
+                className={`flex min-h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-xs whitespace-nowrap hover:bg-hover ${
+                  selected ? 'bg-hover text-ink' : 'text-ink-2'
+                }`}
               >
-                {copy.colorRestoreAll}
+                <span className="flex-1">{option.label}</span>
+                {selected && <Check size={13} weight="bold" aria-hidden className="shrink-0 text-accent" />}
               </button>
-            )}
-          </div>
-
-          <p className="text-xs leading-relaxed text-ink-2">
-            {copy.colorManageHint}
-            <br />
-            排除色号后，用到它的格子会重映射到最近的可用色号；切换色板也会重映射。
-            {copy.colorRestoreNote}
-          </p>
-
-          {managing && (
-            <SwatchGrid
-              entries={palette.colors.map((color, i) => ({ color, i }))}
-              usage={usage}
-              colorIndex={-1}
-              isExcluded={isExcluded}
-              managing
-              onToggle={(code) => a.toggleCode(code)}
-            />
-          )}
-
-          <p className="text-[9.35px] leading-relaxed text-ink-2/80">
-            {DISCLAIMER || t('disclaimer')}
-            <br />
-            {TRADEMARKS || t('trademarks')}
-          </p>
+            )
+          })}
         </div>
-      </div>
-    </>
+      )}
+    </div>
   )
+}
+
+function PalettePicker({
+  palette,
+  paletteId,
+  ariaLabel,
+  onSelect,
+}: {
+  palette: Palette
+  paletteId: string
+  ariaLabel: string
+  onSelect: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+
+  useOverlayEscape(open, () => setOpen(false))
+
+  useEffect(() => {
+    if (!open) return
+    const closeWhenOutside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !pickerRef.current?.contains(event.target)) {
+        setOpen(false)
+      }
+    }
+    window.addEventListener('pointerdown', closeWhenOutside)
+    return () => window.removeEventListener('pointerdown', closeWhenOutside)
+  }, [open])
+
+  return (
+    <div ref={pickerRef} className="relative w-full">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown') {
+            event.preventDefault()
+            setOpen(true)
+          }
+        }}
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface px-2.5 text-left text-sm text-ink hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+      >
+        <span className="min-w-0 flex-1 truncate">{paletteLabel(palette)}</span>
+        <span className="shrink-0 text-xs text-ink-2 tabular">{palette.colors.length}</span>
+        <CaretDown
+          size={16}
+          weight="bold"
+          aria-hidden
+          className={`shrink-0 text-ink transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-label={ariaLabel}
+          className="absolute top-full right-0 left-0 mt-1 max-h-[min(60vh,20rem)] overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-lg"
+          style={{ zIndex: Z.menu }}
+        >
+          {PALETTES.map((option) => {
+            const selected = option.id === paletteId
+            return (
+              <button
+                key={option.id}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onSelect(option.id)
+                  setOpen(false)
+                  triggerRef.current?.focus()
+                }}
+                className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-hover ${
+                  selected ? 'bg-hover text-ink' : 'text-ink-2'
+                }`}
+              >
+                <span className="min-w-0 flex-1 truncate">{paletteLabel(option)}</span>
+                <span className="shrink-0 text-xs text-ink-2 tabular">{option.colors.length}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function paletteLabel(palette: Palette): string {
+  const brand = palette.brand === 'MARD' ? 'MARD（曼德）' : palette.brand
+  return palette.beadMm === 5 ? `${brand}（5mm）` : brand
 }
 
 /* ---------- 共用色块网格 ---------- */
@@ -281,17 +324,12 @@ function SwatchGrid({
   colorIndex,
   isExcluded,
   onPick,
-  managing,
-  onToggle,
 }: {
   entries: Array<{ color: { code: string; name: string; hex: string }; i: number }>
   usage: Uint32Array
   colorIndex: number
   isExcluded: (code: string) => boolean
   onPick?: (index: number) => void
-  /** 管理模式：每个色块带常显的排除/恢复按钮（触屏和键盘都够得着，不靠悬停） */
-  managing?: boolean
-  onToggle?: (code: string) => void
 }) {
   return (
     <div className="grid grid-cols-5 gap-1 px-2 pb-2">
@@ -303,13 +341,12 @@ function SwatchGrid({
             <button
               type="button"
               title={`${color.code} ${color.name} · ${t('editor').colorUsedCount} ${usage[i]} 颗`}
-              aria-pressed={managing ? excluded : selected}
+              aria-pressed={selected}
               aria-label={`色号 ${color.code} ${color.name}，${t('editor').colorUsedCount} ${usage[i]} 颗${
                 excluded ? `（${t('editor').colorExcluded}）` : ''
               }`}
               onClick={() => {
-                if (managing) onToggle?.(color.code)
-                else onPick?.(i)
+                onPick?.(i)
               }}
               className={`flex h-11 w-full items-center justify-center rounded-lg border text-[8.5px] ${
                 excluded
@@ -325,7 +362,7 @@ function SwatchGrid({
               >
                 {color.code}
               </span>
-              {selected && !managing && (
+              {selected && (
                 <Check
                   size={10}
                   weight="bold"
@@ -336,16 +373,6 @@ function SwatchGrid({
                 />
               )}
             </button>
-            {managing && (
-              <span
-                aria-hidden
-                className={`pointer-events-none absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-[8.5px] leading-none ${
-                  excluded ? 'bg-line text-ink' : 'bg-ink text-surface'
-                }`}
-              >
-                {excluded ? '+' : '×'}
-              </span>
-            )}
           </div>
         )
       })}

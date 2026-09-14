@@ -1,7 +1,9 @@
-import { EMPTY, type CellGrid, usageByIndex } from '../domain/grid'
-import { hexToRgb, type Palette } from '../domain/palette'
-import { PT_PER_MM } from '../domain/geometry'
-import { gray255, type PdfSink } from './pdf'
+import { EMPTY, type CellGrid, usageByIndex } from '../domain/grid.ts'
+import { hexToRgb, paletteDisplayLabel, type Palette } from '../domain/palette.ts'
+import { PT_PER_MM } from '../domain/geometry.ts'
+import { gray255, type PdfSink } from './pdf.ts'
+
+export { paletteDisplayLabel }
 
 export interface BomRow {
   /** 1-2 位编号，按用量降序分配 */
@@ -59,18 +61,43 @@ export interface BomDrawOptions {
   rowHeightPt?: number
   maxRows?: number
   title?: string
+  /** 分页时只在最后一页显示总计；默认显示当前 rows 的总计。 */
+  showSummary?: boolean
+  /** 分页时传入整张图的总颗数 / 总色数。 */
+  summary?: { total: number; colors: number }
 }
 
 const COLUMNS: Array<{ key: keyof BomRow | 'swatch'; label: string; weight: number }> = [
-  { key: 'swatch', label: 'Color', weight: 0.5 },
-  { key: 'code', label: 'Code', weight: 0.25 },
-  { key: 'count', label: 'Qty', weight: 0.25 },
+  { key: 'number', label: '序号', weight: 0.12 },
+  { key: 'swatch', label: '色块', weight: 0.14 },
+  { key: 'code', label: '色号', weight: 0.18 },
+  { key: 'name', label: '名称', weight: 0.26 },
+  { key: 'hex', label: '色卡值', weight: 0.18 },
+  { key: 'count', label: '用量（颗）', weight: 0.12 },
 ]
 
+/** 按 A4 页面高度估算一页能放的色号行数，留出页眉和合计行。 */
+export function bomRowsPerPage(pageHeightPt: number, fontPt = 9, rowHeightPt = fontPt * 1.8): number {
+  const yTop = pageHeightPt - 60
+  const beforeRows = rowHeightPt * 2.9
+  const summaryHeight = rowHeightPt * 1.05
+  const bottomReserve = 42
+  return Math.max(1, Math.floor((yTop - bottomReserve) / rowHeightPt - beforeRows / rowHeightPt - summaryHeight / rowHeightPt))
+}
+
+export function bomPageCount(
+  rowCount: number,
+  pageHeightPt: number,
+  fontPt = 9,
+  rowHeightPt = fontPt * 1.8,
+): number {
+  return Math.max(1, Math.ceil(Math.max(0, rowCount) / bomRowsPerPage(pageHeightPt, fontPt, rowHeightPt)))
+}
+
 /**
- * 用量清单：三列（色块 / 色号 / 颗数）。
- * ⚠️ v1 全程避开中文，表头用拉丁字符，保住矢量性（第 11.4 节）。
- * 色块画成实心矩形，不是图片。
+ * Usage list: swatch, code, color-card value, and quantity.
+ * Text is rendered with the embedded CJK font by the PDF sink and remains vector text.
+ * Swatches are solid vector rectangles, not images.
  */
 export function drawBom(sink: PdfSink, rows: BomRow[], options: BomDrawOptions): number {
   const fontPt = options.fontPt ?? 9
@@ -78,57 +105,70 @@ export function drawBom(sink: PdfSink, rows: BomRow[], options: BomDrawOptions):
   const limit = options.maxRows ?? rows.length
   let y = options.yTop
 
-  if (options.title) {
-    sink.fillColor([0, 0, 0])
-    sink.text(options.title, options.x, y, fontPt * 1.6, 'fill')
-    y -= rowHeight * 1.6
-  }
-
-  // 表头
-  let x = options.x
-  sink.fillColor([0, 0, 0])
-  for (const column of COLUMNS) {
-    sink.text(column.label, x, y, fontPt, 'fill')
-    x += options.width * column.weight
-  }
-  y -= rowHeight * 0.5
-  sink.strokeColor(gray255(0.6))
-  sink.lineWidth(0.5)
-  sink.moveTo(options.x, y)
-  sink.lineTo(options.x + options.width, y)
-  sink.stroke()
-  y -= rowHeight * 0.8
-
-  for (let i = 0; i < Math.min(limit, rows.length); i++) {
-    const row = rows[i]
-    x = options.x
-    for (const column of COLUMNS) {
-      const cellWidth = options.width * column.weight
-      if (column.key === 'swatch') {
-        // 实心矩形色块（矢量）
-        sink.fillColor(hexToRgb(row.hex))
-        sink.rect(x, y - fontPt * 0.25, cellWidth * 0.6, rowHeight * 0.7)
-        sink.fill()
-      } else if (column.key === 'count') {
-        sink.fillColor([0, 0, 0])
-        sink.text(String(row.count), x, y, fontPt, 'fill')
-      } else {
-        const value = String(row[column.key as keyof BomRow] ?? '')
-        sink.fillColor([0, 0, 0])
-        sink.text(value, x, y, fontPt, 'fill')
-      }
-      x += cellWidth
+  sink.setFont('cjk')
+  try {
+    if (options.title) {
+      sink.fillColor([0, 0, 0])
+      sink.text(options.title, options.x, y, fontPt * 1.6, 'fill')
+      y -= rowHeight * 1.6
     }
+
+    // Header
+    let x = options.x
+    sink.fillColor([0, 0, 0])
+    for (const column of COLUMNS) {
+      sink.text(column.label, x, y, fontPt, 'fill')
+      x += options.width * column.weight
+    }
+    y -= rowHeight * 0.5
+    sink.strokeColor(gray255(0.6))
+    sink.lineWidth(0.5)
+    sink.moveTo(options.x, y)
+    sink.lineTo(options.x + options.width, y)
+    sink.stroke()
+    y -= rowHeight * 0.8
+
+    for (let i = 0; i < Math.min(limit, rows.length); i++) {
+      const row = rows[i]
+      x = options.x
+      for (const column of COLUMNS) {
+        const cellWidth = options.width * column.weight
+        if (column.key === 'swatch') {
+          // Solid vector swatch.
+          sink.fillColor(hexToRgb(row.hex))
+          sink.rect(x, y - fontPt * 0.25, cellWidth * 0.6, rowHeight * 0.7)
+          sink.fill()
+        } else {
+          sink.fillColor([0, 0, 0])
+          sink.text(String(row[column.key as keyof BomRow] ?? ''), x, y, fontPt, 'fill')
+        }
+        x += cellWidth
+      }
+      y -= rowHeight
+    }
+    if (options.showSummary === false) return y
+
+    const summary = options.summary ?? { total: totalBeads(rows), colors: rows.length }
+    sink.strokeColor(gray255(0.6))
+    sink.lineWidth(0.5)
+    sink.moveTo(options.x, y - rowHeight * 0.15)
+    sink.lineTo(options.x + options.width, y - rowHeight * 0.15)
+    sink.stroke()
+    y -= rowHeight * 0.9
+    sink.fillColor([0, 0, 0])
+    sink.text(`合计：${summary.total} 颗 · ${summary.colors} 种色号`, options.x, y, fontPt, 'fill')
     y -= rowHeight
+    return y
+  } finally {
+    sink.setFont('latin')
   }
-  return y
 }
 
 /** 用量 CSV：UTF-8 带 BOM，Excel 直接打开不乱码（第 11.4 节） */
 export function bomToCsv(rows: BomRow[], paletteName: string): string {
-  const lines = [`# ${paletteName}`, 'No.,Code,Name,HEX,Qty,Total']
+  const lines = [`# ${paletteName}`, '序号,色号,名称,HEX,数量,合计']
   for (const row of rows) lines.push(`${row.number},${row.code},${row.name},${row.hex},${row.count},`)
-  lines.push(`Total,,,,${totalBeads(rows)},${rows.length} colors`)
+  lines.push(`合计,,,,${totalBeads(rows)},${rows.length} 色`)
   return `\uFEFF${lines.join('\r\n')}\r\n`
 }
 

@@ -1,11 +1,14 @@
 import {
   ArrowLeft,
   FloppyDisk,
+  PaperPlaneTilt,
 } from '@phosphor-icons/react'
 
 import { t } from '../i18n/zh'
 import { useEditor } from '../editor/store'
 import { Btn } from './ui'
+
+const TOP_ACTION_BUTTON_CLS = 'h-9 w-[4.1rem] leading-none'
 
 /**
  * Excalidraw 式浮层文档头：导出时提供返回编辑，保存和输出在右。
@@ -41,23 +44,26 @@ export default function Toolbar() {
       </div>
 
       {stage !== 'export' && (
-        <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-xl border border-line bg-surface p-1 shadow-md">
+        <div className="pointer-events-auto flex shrink-0 items-center gap-1">
           <Btn
+            className={TOP_ACTION_BUTTON_CLS}
             onClick={() => void saveNow(true)}
             disabled={saving}
             title={copy.saveHint}
-            variant={gateOpen ? 'secondary' : 'ghost'}
+            variant="secondary"
           >
             <FloppyDisk size={14} aria-hidden />
-            <span className="hidden sm:inline">{copy.save}</span>
+            <span>{copy.saveShort}</span>
           </Btn>
           <Btn
+            className={TOP_ACTION_BUTTON_CLS}
             variant="primary"
             onClick={openExport}
             disabled={!gateOpen}
             title={gateOpen ? copy.nextExport : copy.exportGate}
           >
-            {copy.export}
+            <PaperPlaneTilt size={14} aria-hidden />
+            <span>{copy.export}</span>
           </Btn>
         </div>
       )}
@@ -65,4 +71,3 @@ export default function Toolbar() {
     </header>
   )
 }
-

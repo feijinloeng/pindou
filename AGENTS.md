@@ -42,7 +42,7 @@ Still to verify or finish:
 
 ## Architecture map
 
-- `src/App.tsx` — hash-route shell (`#/library`, `#/editor`), library-only app chrome, route transition, session owner.
+- `src/App.tsx` — single editor shell; the library is an in-editor panel, with legacy `#/library` links redirected to `#/editor`.
 - `src/pages/Library.tsx` — project library and recoverable-trash workflow.
 - `src/pages/Editor.tsx` — editor state switch: drawing canvas, board picker, or export stage; canvas remains mounted when temporarily hidden.
 - `src/pages/BoardPicker.tsx` — physical board layout editing. `src/pages/pickerActions.ts` bridges its header actions.
@@ -72,7 +72,7 @@ Before changing UI behavior, trace the affected Zustand action and all its calle
 ## Production deployment
 
 - **Public site:** https://pindou.liangfeiyan.cn
-- **Routes:** `#/library`, `#/editor` (hash routes; no server rewrite logic is required for them).
+- **Routes:** root and `#/editor`; legacy `#/library` redirects to `#/editor` (hash routes; no server rewrite logic is required).
 - **Hosting:** Ubuntu server `82.156.156.239`, served by Nginx from `/var/www/pindou`.
 - **Nginx config template:** `deploy/nginx-pindou.conf`.
 - **TLS:** Let's Encrypt. The domain's CAA record allows `letsencrypt.org`; do not change certificate authority without reviewing that DNS rule.

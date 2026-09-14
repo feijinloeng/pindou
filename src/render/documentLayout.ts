@@ -1,14 +1,20 @@
-import type { BoardGeometry } from '../domain/board'
-import { EMPTY, type CellGrid, usageByIndex } from '../domain/grid'
-import { PT_PER_MM } from '../domain/geometry'
-import type { Palette } from '../domain/palette'
-import { assignNumbers } from './bom'
+import type { BoardGeometry } from '../domain/board.ts'
+import { EMPTY, isPlaceable, type CellGrid, usageByIndex } from '../domain/grid.ts'
+import { PT_PER_MM } from '../domain/geometry.ts'
+import type { Palette } from '../domain/palette.ts'
+import { assignNumbers } from './bom.ts'
 
 export const A4_MM = { w: 210, h: 297 }
 /** 不可打印边距默认 5mm；不同打印机不同，做成可配置（第 7.1 节） */
 export const DEFAULT_MARGIN_MM = 5
-/** 重叠带宽度：3 列豆 */
+/** 纸面版页眉预留区：标题、范围和坐标数字不能压到图案上。 */
+export const PAPER_HEADER_MM = 18
+/** 重叠带宽度：3 列 / 行豆，兼顾辨认和省纸 */
 export const OVERLAP_CELLS = 3
+/** 裁切后片段之间留出的空白，方便用剪刀分开。 */
+export const PAPER_PACK_GAP_MM = 10
+/** 多个小片段排在同一页时，片段编号和坐标数字占用的上方空间。 */
+export const PAPER_FRAGMENT_LABEL_PT = 14
 /** PDF 单页上限 14400pt ≈ 5080mm */
 export const MAX_PAGE_PT = 14400
 /**
@@ -25,15 +31,36 @@ export interface SheetRange {
   rows: number
 }
 
+/** A4 上实际打印的一个纸样片段；range 是裁切后的范围，source 是原始分页范围。 */
+export interface PaperFragment {
+  range: SheetRange
+  source: SheetRange
+  sourceIndex: number
+  /** 片段左下角在 A4 页面中的位置（PDF 点），不改变格子的 1:1 尺寸。 */
+  xPt: number
+  yPt: number
+  cropped: boolean
+  showLabel: boolean
+}
+
+/** 一张实际的 A4 纸，可能承载一个完整纸页，也可能承载多个稀疏片段。 */
+export interface PaperPage {
+  fragments: PaperFragment[]
+}
+
 export interface DocumentLayout {
   /** 页面尺寸，毫米 */
   pageMm: { w: number; h: number }
+  /** 纸面版自动选择的 A4 方向；屏幕版不使用此字段 */
+  orientation?: PaperOrientation
   /** 一页能放几列 / 几行豆 */
   cellsPerPage: { cols: number; rows: number }
   /** 重叠带宽度（格），0 = 不分页 */
   overlap: number
   /** 页面划分：每页覆盖的全局豆格范围 */
   sheets: SheetRange[]
+  /** 纸面版实际输出的 A4 页；屏幕版不使用此字段。 */
+  pages?: PaperPage[]
   marginMm: number
   drawBoardSeams: boolean
   drawSheetMarks: boolean
@@ -42,12 +69,50 @@ export interface DocumentLayout {
   includeBom: boolean
 }
 
-/** A4 上按针距能放多少格（第 7.1 节的实测数字：2.6mm → 76 × 110） */
-export function paperCapacity(pitchMm: number, marginMm = DEFAULT_MARGIN_MM) {
+export type PaperOrientation = 'portrait' | 'landscape'
+
+export interface PaperScope {
+  col0: number
+  row0: number
+  col1: number
+  row1: number
+}
+
+/**
+ * A4 上按针距能放多少格（默认竖版：2.6mm → 76 × 110）。
+ * 传入横版页面尺寸后，列 / 行容量会自动互换。
+ */
+export function paperCapacity(
+  pitchMm: number,
+  marginMm = DEFAULT_MARGIN_MM,
+  pageMm: { w: number; h: number } = A4_MM,
+  topReserveMm = 0,
+) {
   return {
-    cols: Math.floor((A4_MM.w - marginMm * 2) / pitchMm),
-    rows: Math.floor((A4_MM.h - marginMm * 2) / pitchMm),
+    cols: Math.max(1, Math.floor((pageMm.w - marginMm * 2) / pitchMm)),
+    rows: Math.max(1, Math.floor((pageMm.h - marginMm * 2 - topReserveMm) / pitchMm)),
   }
+}
+
+export function a4PageMm(orientation: PaperOrientation): { w: number; h: number } {
+  return orientation === 'landscape' ? { w: A4_MM.h, h: A4_MM.w } : { ...A4_MM }
+}
+
+/** 本次纸面导出的外接范围；多个底板合并成一个连续分页范围。 */
+export function getPaperScope(grid: CellGrid, boards?: BoardGeometry['boards']): PaperScope {
+  if (!boards?.length) return { col0: 0, row0: 0, col1: grid.cols, row1: grid.rows }
+
+  let col0 = Number.POSITIVE_INFINITY
+  let row0 = Number.POSITIVE_INFINITY
+  let col1 = 0
+  let row1 = 0
+  for (const board of boards) {
+    col0 = Math.min(col0, board.c0)
+    row0 = Math.min(row0, board.r0)
+    col1 = Math.max(col1, board.c0 + board.cw)
+    row1 = Math.max(row1, board.r0 + board.rh)
+  }
+  return { col0, row0, col1, row1 }
 }
 
 /** 第 k 页覆盖的全局范围（第 7.4 节） */
@@ -154,42 +219,289 @@ export interface PaperLayoutOptions {
   overlap?: number
   showCodes?: boolean
   includeBom?: boolean
-  /** 只导出这些板（按板导出）；不传就是整图 */
+  /** 兼容旧调用：多个板会合并成一个外接范围分页，不会再一块板生成一份 PDF */
   boards?: BoardGeometry['boards']
 }
 
-/** 纸面版：1:1 分页，带重叠带 */
+/** 纸面版：1:1 A4 分页，按整张板阵合并分页并带重叠带。 */
 export function paperLayout(
   grid: CellGrid,
   pitchMm: number,
   options: PaperLayoutOptions = {},
 ): DocumentLayout {
   const marginMm = options.marginMm ?? DEFAULT_MARGIN_MM
-  const overlap = options.overlap ?? OVERLAP_CELLS
-  const capacity = paperCapacity(pitchMm, marginMm)
-  const sheets = options.boards?.length
-    ? options.boards.flatMap((board) =>
-        paginate(board.cw, board.rh, capacity.cols, capacity.rows, overlap).map((sheet) => ({
-          col0: sheet.col0 + board.c0,
-          row0: sheet.row0 + board.r0,
-          cols: sheet.cols,
-          rows: sheet.rows,
-        })),
-      )
-    : paginate(grid.cols, grid.rows, capacity.cols, capacity.rows, overlap)
+  const scope = getPaperScope(grid, options.boards)
+  const requestedOverlap = Math.max(0, Math.floor(options.overlap ?? OVERLAP_CELLS))
+
+  const candidate = (orientation: PaperOrientation) => {
+    const pageMm = a4PageMm(orientation)
+    const capacity = paperCapacity(pitchMm, marginMm, pageMm, PAPER_HEADER_MM)
+    // 至少保留一格新的内容，避免极端小页面被重叠带完全占满。
+    const overlap = Math.max(
+      0,
+      Math.min(
+        requestedOverlap,
+        capacity.cols - 1,
+        capacity.rows - 1,
+        scope.col1 - scope.col0 - 1,
+        scope.row1 - scope.row0 - 1,
+      ),
+    )
+    const sheets = paginate(
+      scope.col1 - scope.col0,
+      scope.row1 - scope.row0,
+      capacity.cols,
+      capacity.rows,
+      overlap,
+    ).map((sheet) => ({
+      col0: sheet.col0 + scope.col0,
+      row0: sheet.row0 + scope.row0,
+      cols: sheet.cols,
+      rows: sheet.rows,
+    }))
+    const pages = packPaperPages(grid, sheets, scope, pageMm, marginMm, overlap, pitchMm)
+    return { orientation, pageMm, capacity, overlap, sheets, pages }
+  }
+
+  const portrait = candidate('portrait')
+  const landscape = candidate('landscape')
+  const scopeWidth = scope.col1 - scope.col0
+  const scopeHeight = scope.row1 - scope.row0
+  const chosen =
+    portrait.pages.length < landscape.pages.length
+      ? portrait
+      : landscape.pages.length < portrait.pages.length
+        ? landscape
+        : scopeWidth > scopeHeight
+          ? landscape
+          : portrait
 
   return {
-    pageMm: { ...A4_MM },
-    cellsPerPage: overlap > 0 ? capacity : capacity,
-    overlap,
-    sheets,
+    pageMm: chosen.pageMm,
+    orientation: chosen.orientation,
+    cellsPerPage: chosen.capacity,
+    overlap: chosen.overlap,
+    sheets: chosen.sheets,
+    pages: chosen.pages,
     marginMm,
     drawBoardSeams: true,
     drawSheetMarks: true,
-    drawCodes: options.showCodes ?? false,
+    drawCodes: options.showCodes ?? true,
     drawRuler: true,
     includeBom: options.includeBom ?? true,
   }
+}
+
+interface SheetTrim {
+  range: SheetRange
+  cropped: boolean
+  /** 即使没有彩色豆子，只要逻辑页本身是窄条，也应参与 A4 装箱。 */
+  packable: boolean
+}
+
+interface ContentBounds {
+  minCol: number
+  minRow: number
+  maxCol: number
+  maxRow: number
+}
+
+/**
+ * 找出一张逻辑分页里真正有豆子的范围。空白页保留原尺寸，避免把“没有图案”误删成没有定位信息。
+ */
+function contentBounds(grid: CellGrid, sheet: SheetRange): ContentBounds | null {
+  let minCol = Number.POSITIVE_INFINITY
+  let minRow = Number.POSITIVE_INFINITY
+  let maxCol = -1
+  let maxRow = -1
+  for (let row = sheet.row0; row < sheet.row0 + sheet.rows; row++) {
+    const rowBase = row * grid.cols
+    for (let col = sheet.col0; col < sheet.col0 + sheet.cols; col++) {
+      const index = rowBase + col
+      if (grid.cells[index] === EMPTY || !isPlaceable(grid, index)) continue
+      minCol = Math.min(minCol, col)
+      minRow = Math.min(minRow, row)
+      maxCol = Math.max(maxCol, col)
+      maxRow = Math.max(maxRow, row)
+    }
+  }
+  return maxCol < 0 ? null : { minCol, minRow, maxCol, maxRow }
+}
+
+/**
+ * 只裁“明显稀疏”的逻辑页。裁切范围保留 2～3 格缓冲；如果图案靠近相邻页，
+ * 对应的外边缘也会保留，红色重叠线仍然有地方落下。所有坐标和格子尺寸保持原值。
+ */
+function trimSparseSheet(
+  grid: CellGrid,
+  sheet: SheetRange,
+  scope: PaperScope,
+  overlap: number,
+  capacity: { cols: number; rows: number },
+): SheetTrim {
+  const bounds = contentBounds(grid, sheet)
+  if (!bounds) {
+    const narrow = sheet.cols < capacity.cols * 0.62 || sheet.rows < capacity.rows * 0.62
+    return { range: sheet, cropped: false, packable: narrow }
+  }
+
+  const padding = Math.max(2, overlap)
+  let col0 = Math.max(sheet.col0, bounds.minCol - padding)
+  let row0 = Math.max(sheet.row0, bounds.minRow - padding)
+  let col1 = Math.min(sheet.col0 + sheet.cols, bounds.maxCol + 1 + padding)
+  let row1 = Math.min(sheet.row0 + sheet.rows, bounds.maxRow + 1 + padding)
+
+  // 只有图案本身靠近分页边缘时才保留那一侧的重叠带；远离图案的空白边不必带上，
+  // 否则为了保留一条没有内容的边，会把本来很小的片段重新撑满整页。
+  if (overlap > 0) {
+    if (sheet.col0 > scope.col0 && bounds.minCol - sheet.col0 <= padding) {
+      const seam = Math.min(overlap, sheet.cols)
+      col0 = sheet.col0
+      col1 = Math.max(col1, sheet.col0 + seam)
+    }
+    if (
+      sheet.col0 + sheet.cols < scope.col1 &&
+      sheet.col0 + sheet.cols - 1 - bounds.maxCol <= padding
+    ) {
+      const seam = Math.min(overlap, sheet.cols)
+      col0 = Math.min(col0, sheet.col0 + sheet.cols - seam)
+      col1 = sheet.col0 + sheet.cols
+    }
+    if (sheet.row0 > scope.row0 && bounds.minRow - sheet.row0 <= padding) {
+      const seam = Math.min(overlap, sheet.rows)
+      row0 = sheet.row0
+      row1 = Math.max(row1, sheet.row0 + seam)
+    }
+    if (
+      sheet.row0 + sheet.rows < scope.row1 &&
+      sheet.row0 + sheet.rows - 1 - bounds.maxRow <= padding
+    ) {
+      const seam = Math.min(overlap, sheet.rows)
+      row0 = Math.min(row0, sheet.row0 + sheet.rows - seam)
+      row1 = sheet.row0 + sheet.rows
+    }
+  }
+
+  const range = { col0, row0, cols: col1 - col0, rows: row1 - row0 }
+  const originalArea = sheet.cols * sheet.rows
+  const trimmedArea = range.cols * range.rows
+  // 低于约 62% 才视为稀疏页，避免普通满幅图案只是因为边缘有少量空白就被拆碎。
+  const sparse = trimmedArea < originalArea * 0.62
+  const narrow = range.cols < capacity.cols * 0.62 || range.rows < capacity.rows * 0.62
+  return sparse || narrow
+    ? { range, cropped: sparse, packable: true }
+    : { range: sheet, cropped: false, packable: false }
+}
+
+/**
+ * 将稀疏页做“先裁切、再排版”的装箱。这里只平移片段，不做任何缩放，
+ * 因而打印后每格仍是 pitchMm 毫米；完整页则保持单独一张 A4。
+ */
+function packPaperPages(
+  grid: CellGrid,
+  sheets: SheetRange[],
+  scope: PaperScope,
+  pageMm: { w: number; h: number },
+  marginMm: number,
+  overlap: number,
+  pitchMm: number,
+): PaperPage[] {
+  const P = pitchMm * PT_PER_MM
+  const pageWidthPt = pageMm.w * PT_PER_MM
+  const pageHeightPt = pageMm.h * PT_PER_MM
+  const marginPt = marginMm * PT_PER_MM
+  const contentWidthPt = pageWidthPt - marginPt * 2
+  const contentHeightPt = pageHeightPt - marginPt * 2 - PAPER_HEADER_MM * PT_PER_MM
+  const gapPt = PAPER_PACK_GAP_MM * PT_PER_MM
+  const labelPt = PAPER_FRAGMENT_LABEL_PT
+  const capacity = {
+    cols: contentWidthPt / P,
+    rows: contentHeightPt / P,
+  }
+  const pages: PaperPage[] = []
+
+  let packed: PaperPage | null = null
+  let cursorX = 0
+  let cursorY = 0
+  let rowHeight = 0
+
+  const flush = () => {
+    if (packed && packed.fragments.length > 0) pages.push(packed)
+    packed = null
+    cursorX = 0
+    cursorY = 0
+    rowHeight = 0
+  }
+
+  const addStandalone = (
+    range: SheetRange,
+    source: SheetRange,
+    sourceIndex: number,
+    cropped: boolean,
+    showLabel = cropped,
+  ) => {
+    const height = range.rows * P
+    const labelHeight = showLabel ? labelPt : 0
+    pages.push({
+      fragments: [
+        {
+          range,
+          source,
+          sourceIndex,
+          xPt: marginPt,
+          yPt: pageHeightPt - marginPt - PAPER_HEADER_MM * PT_PER_MM - labelHeight - height,
+          cropped,
+          showLabel,
+        },
+      ],
+    })
+  }
+
+  for (let sourceIndex = 0; sourceIndex < sheets.length; sourceIndex++) {
+    const source = sheets[sourceIndex]
+    const trimmed = trimSparseSheet(grid, source, scope, overlap, capacity)
+    if (!trimmed.packable) {
+      flush()
+      addStandalone(trimmed.range, source, sourceIndex, false)
+      continue
+    }
+
+    const width = trimmed.range.cols * P
+    const height = trimmed.range.rows * P
+    const itemHeight = labelPt + height
+    // 逻辑页本身应该能放进 A4；编号额外占一点空间，若极端情况下放不下则保留单独裁片。
+    if (width > contentWidthPt || itemHeight > contentHeightPt) {
+      flush()
+      addStandalone(trimmed.range, source, sourceIndex, trimmed.cropped, false)
+      continue
+    }
+
+    if (!packed) packed = { fragments: [] }
+    if (cursorX > 0 && cursorX + width > contentWidthPt) {
+      cursorY += rowHeight + gapPt
+      cursorX = 0
+      rowHeight = 0
+    }
+    if (cursorY + itemHeight > contentHeightPt && packed.fragments.length > 0) {
+      flush()
+      packed = { fragments: [] }
+    }
+
+    const originY = pageHeightPt - marginPt - PAPER_HEADER_MM * PT_PER_MM - cursorY - itemHeight
+    packed.fragments.push({
+      range: trimmed.range,
+      source,
+      sourceIndex,
+      xPt: marginPt + cursorX,
+      yPt: originY,
+      cropped: true,
+      showLabel: true,
+    })
+    cursorX += width + gapPt
+    rowHeight = Math.max(rowHeight, itemHeight)
+  }
+  flush()
+  return pages
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +517,7 @@ export interface AnnotationOptions {
   maxBigPt: number
   /** 逐格字号低于这个值就降级成 1-2 位编号 */
   numberBelowPt: number
-  /** 关掉就完全不标注（纸面版默认关） */
+  /** 关掉就完全不标注；纸面版默认打开，便于垫板拼色 */
   enabled: boolean
 }
 
@@ -216,6 +528,9 @@ export const DEFAULT_ANNOTATION: AnnotationOptions = {
   numberBelowPt: 2.4,
   enabled: true,
 }
+
+/** Helvetica 字符平均宽度；逐格标注按这个值给色号留出真实横向空间。 */
+const CELL_CODE_WIDTH_EM = 0.62
 
 export interface RegionLabel {
   colorIndex: number
@@ -270,7 +585,11 @@ export function planAnnotations(
   const degraded: boolean[] = []
   for (let i = 0; i < palette.colors.length; i++) {
     const color = palette.colors[i]
-    const byCode = Math.min(P * 0.7, (P * 1.8) / color.code.length)
+    // Leave a little whitespace inside a 2.6mm cell; labels are plain black/white text.
+    const byCode = Math.min(
+      P * 0.5,
+      (P * 0.82) / (CELL_CODE_WIDTH_EM * color.code.length),
+    )
     if (byCode < opts.numberBelowPt && usage[i] > 0) {
       const number = numbers.get(color.code) ?? color.code
       codeFor[i] = number
@@ -335,7 +654,7 @@ export function planAnnotations(
     }
     stats.regions++
 
-    // ② 拆边界环 / 内部。⚠️ 棋盘外沿不算边界（否则最外圈会被全部逐格标）
+    // ② 拆边界环 / 内部。图案外沿和不可用空档也算边界，整块单色区域才会有清晰外圈。
     let ringCount = 0
     let minX = cols
     let minY = rows
@@ -351,10 +670,14 @@ export function planAnnotations(
       if (x > maxX) maxX = x
       if (y > maxY) maxY = y
       const touchesOther =
-        (x > 0 && cells[i - 1] !== color) ||
-        (x + 1 < cols && cells[i + 1] !== color) ||
-        (y > 0 && cells[i - cols] !== color) ||
-        (y + 1 < rows && cells[i + cols] !== color)
+        x === 0 ||
+        (x > 0 && (!open(i - 1) || cells[i - 1] !== color)) ||
+        x + 1 === cols ||
+        (x + 1 < cols && (!open(i + 1) || cells[i + 1] !== color)) ||
+        y === 0 ||
+        (y > 0 && (!open(i - cols) || cells[i - cols] !== color)) ||
+        y + 1 === rows ||
+        (y + 1 < rows && (!open(i + cols) || cells[i + cols] !== color))
       if (touchesOther) {
         ringFlags[k] = 1
         ringMark[i] = 1

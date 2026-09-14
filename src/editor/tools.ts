@@ -17,7 +17,7 @@ export function directSink(grid: CellGrid): WriteSink {
   }
 }
 
-/** 点选：落一格色 */
+/** 写入单格；画笔和油漆桶等工具共用这条写入路径。 */
 export function paint(
   sink: WriteSink,
   grid: CellGrid,

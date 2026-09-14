@@ -174,6 +174,33 @@ export interface BoardLayout {
   gapMm: number
 }
 
+/** 两块板的豆格矩形是否有真正的面积交集。共边不算重叠。 */
+export function boardPlacementsOverlap(
+  first: BoardPlacement,
+  second: BoardPlacement,
+): boolean {
+  const firstProfile = findBoardProfile(first?.board)
+  const secondProfile = findBoardProfile(second?.board)
+  if (!firstProfile || !secondProfile) return false
+  return (
+    first.col < second.col + secondProfile.pegs &&
+    second.col < first.col + firstProfile.pegs &&
+    first.row < second.row + secondProfile.pegs &&
+    second.row < first.row + firstProfile.pegs
+  )
+}
+
+/** 只检查一个候选位置和其它板，供拖动预览使用。 */
+export function boardPlacementOverlapsOthers(
+  placements: BoardPlacement[],
+  index: number,
+  candidate: BoardPlacement,
+): boolean {
+  return placements.some((placement, placementIndex) => {
+    return placementIndex !== index && boardPlacementsOverlap(placement, candidate)
+  })
+}
+
 /** 尺寸相关的错误，矩阵板阵和自由摆放共用 */
 type SizeError =
   | { kind: 'bad-size'; cols: number; rows: number }
@@ -231,7 +258,6 @@ export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
 
   let cols = 0
   let rows = 0
-  const sizes: number[] = []
   const pitches = new Set<number>()
   for (const placement of placements) {
     const profile = findBoardProfile(placement?.board)
@@ -243,7 +269,6 @@ export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
       return { kind: 'bad-placement', placement }
     }
     pitches.add(profile.pitchMm)
-    sizes.push(profile.pegs)
     cols = Math.max(cols, placement.col + profile.pegs)
     rows = Math.max(rows, placement.row + profile.pegs)
   }
@@ -251,12 +276,7 @@ export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
     const first = placements[i]
     for (let j = i + 1; j < placements.length; j++) {
       const second = placements[j]
-      if (
-        first.col < second.col + sizes[j] &&
-        second.col < first.col + sizes[i] &&
-        first.row < second.row + sizes[j] &&
-        second.row < first.row + sizes[i]
-      ) {
+      if (boardPlacementsOverlap(first, second)) {
         return { kind: 'overlap', first, second }
       }
     }

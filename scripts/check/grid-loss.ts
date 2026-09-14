@@ -5,8 +5,17 @@
  */
 import assert from 'node:assert/strict'
 
-import { boardGuide, deriveLayoutGeometry } from '../../src/domain/board.ts'
+import {
+  boardGuide,
+  boardPlacementOverlapsOthers,
+  deriveLayoutGeometry,
+  validateLayout,
+} from '../../src/domain/board.ts'
 import { EMPTY, lostCells } from '../../src/domain/grid.ts'
+import { PT_PER_MM } from '../../src/domain/geometry.ts'
+import { paletteDisplayLabel } from '../../src/domain/palette.ts'
+import { paperLayout, planAnnotations } from '../../src/render/documentLayout.ts'
+import { exportFilename } from '../../src/render/download.ts'
 
 /** 全板可用（placeable 省略）或按遮罩给 */
 function grid(cols: number, rows: number, placeable?: Uint8Array) {
@@ -85,6 +94,108 @@ function fill(g: ReturnType<typeof grid>, index: number, value = 0) {
     gapMm: 0,
   }
   assert.throws(() => deriveLayoutGeometry(overlap), /叠在一起/)
+
+  // 共边、留缝和阶梯形都属于合法自由布局；只有面积交集才是重叠。
+  const stepped = [
+    { board: 'mini26' as const, col: 0, row: 0 },
+    { board: 'mini26' as const, col: 26, row: 7 },
+  ]
+  assert.equal(validateLayout({ placements: stepped, gapMm: 0 }), null)
+  assert.equal(boardPlacementOverlapsOthers(stepped, 1, stepped[1]), false)
+  assert.equal(
+    boardPlacementOverlapsOthers(stepped, 1, { board: 'mini26', col: 25, row: 7 }),
+    true,
+  )
 }
 
-console.log('lostCells / boardGuide / free layout 自检通过（12 条）')
+// 9. Export bundle primary files keep a readable numeric order and distinguish preview/vector/print output.
+assert.equal(exportFilename(1, '春日作品', '预览图', 'png'), '1.春日作品（预览图）.png')
+assert.equal(exportFilename(2, '春日作品', '矢量版', 'pdf'), '2.春日作品（矢量版）.pdf')
+assert.equal(exportFilename(3, '春日作品', '打印版', 'pdf'), '3.春日作品（打印版）.pdf')
+
+// 10. Vector usage-list labels use Chinese while codes and palette identifiers stay intact.
+const mardLabel = paletteDisplayLabel({
+  brand: 'MARD',
+  displayName: 'MARD 221（221/221 有色值）',
+})
+assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
+
+// 11. Paper output uses one continuous scope for a multi-board layout, then chooses the
+// orientation that needs fewer A4 sheets instead of starting a new PDF per board.
+{
+  const wide = grid(104, 52)
+  for (let i = 0; i < wide.cells.length; i++) wide.cells[i] = 0
+  const layout = paperLayout(wide, 2.6, {
+    overlap: 3,
+    boards: [
+      { index: 0, board: 'mini52', c0: 0, r0: 0, cw: 52, rh: 52 },
+      { index: 1, board: 'mini52', c0: 52, r0: 0, cw: 52, rh: 52 },
+    ],
+  })
+  assert.equal(layout.orientation, 'landscape')
+  assert.equal(layout.sheets.length, 1)
+  assert.equal(layout.sheets[0].cols, 104)
+  assert.equal(layout.sheets[0].rows, 52)
+}
+
+// 12. Adjacent sheets share the configured overlap band.
+{
+  const large = grid(150, 150)
+  const layout = paperLayout(large, 2.6, { overlap: 3 })
+  assert.ok(layout.sheets.length > 1)
+  assert.equal(layout.sheets[1].col0, layout.sheets[0].col0 + layout.sheets[0].cols - 3)
+  assert.equal(layout.sheets[3].row0, layout.sheets[0].row0 + layout.sheets[0].rows - 3)
+}
+
+// 13. A uniform region gets a large center label plus an outer boundary ring.
+{
+  const uniform = grid(12, 12)
+  uniform.cells.fill(0)
+  const palette = {
+    colors: [{ code: 'A01', name: '测试色', hex: '#123456', rgb: [18, 52, 86], lab: [0, 0, 0] }],
+  } as unknown as Parameters<typeof planAnnotations>[1]
+  const plan = planAnnotations(uniform, palette, 2.6)
+  assert.equal(plan.labels.length, 1)
+  assert.equal(plan.stats.boundaryCells, 44)
+  assert.equal(plan.cellMarks.reduce((total, marked) => total + marked, 0), 44)
+}
+
+// 14. Two very sparse neighboring logical sheets are cropped and packed on one A4 without scaling.
+{
+  const sparse = grid(150, 150)
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 4; col++) sparse.cells[row * sparse.cols + col] = 0
+    for (let col = 103; col < 107; col++) sparse.cells[row * sparse.cols + col] = 0
+  }
+  const layout = paperLayout(sparse, 2.6, { overlap: 3 })
+  const firstPage = layout.pages?.[0]
+  assert.ok(firstPage)
+  assert.equal(firstPage.fragments.length, 2)
+  assert.equal(firstPage.fragments[0].sourceIndex, 0)
+  assert.equal(firstPage.fragments[1].sourceIndex, 1)
+  assert.ok(firstPage.fragments.every((fragment) => fragment.cropped && fragment.showLabel))
+  assert.ok(layout.pages!.length < layout.sheets.length)
+  const first = firstPage.fragments[0]
+  const second = firstPage.fragments[1]
+  const gapPt = second.xPt - (first.xPt + first.range.cols * 2.6 * PT_PER_MM)
+  assert.ok(gapPt >= 10 * PT_PER_MM)
+  assert.equal(first.range.cols * 2.6, 18.2)
+}
+
+// 15. Even a thin logical edge page with no colored beads is printable content (grid/red guides),
+// so the two final strips must still be packed instead of remaining as two mostly blank A4 pages.
+{
+  const blank = paperLayout(grid(150, 150), 2.6, { overlap: 3 })
+  assert.equal(blank.sheets.length, 6)
+  const lastPage = blank.pages?.at(-1)
+  assert.ok(lastPage)
+  assert.equal(lastPage.fragments.length, 2)
+  assert.deepEqual(
+    lastPage.fragments.map((fragment) => fragment.sourceIndex),
+    [4, 5],
+  )
+  assert.ok(lastPage.fragments.every((fragment) => fragment.showLabel))
+  assert.ok(Math.abs(lastPage.fragments[0].yPt - lastPage.fragments[1].yPt) >= 10 * PT_PER_MM)
+}
+
+console.log('lostCells / boardGuide / free layout / drag collision / export names / BOM palette label / A4 paper layout 自检通过（36 条）')

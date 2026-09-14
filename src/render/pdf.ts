@@ -1,7 +1,11 @@
 import { jsPDF } from 'jspdf'
 
-import type { Rgb } from '../conversion/colorDistance'
-import { PT_PER_MM } from '../domain/geometry'
+import type { Rgb } from '../conversion/colorDistance.ts'
+import { PT_PER_MM } from '../domain/geometry.ts'
+import { PINDOU_BOM_CJK_FONT_BASE64 } from './fonts/pindouBomCjk.ts'
+
+const CJK_FONT_FILE = 'PindouBOMCJK-Regular.ttf'
+const CJK_FONT_NAME = 'PindouBOMCJK'
 
 /**
  * PDF 写入的一层薄封装。
@@ -24,6 +28,8 @@ export interface PdfSink {
   dash(pattern: number[]): void
   /** 透明度（重叠带底色用）。1 = 不透明 */
   opacity(value: number): void
+  /** Switch between the built-in Latin font and the embedded BOM CJK font. */
+  setFont(family: 'latin' | 'cjk'): void
   rect(x: number, y: number, w: number, h: number): void
   fill(): void
   moveTo(x: number, y: number): void
@@ -81,6 +87,7 @@ function escapeText(str: string): string {
 
 class JsPdfSink implements PdfSink {
   private doc: jsPDF
+  private cjkFontReady = false
   pageWidth: number
   pageHeight: number
 
@@ -112,6 +119,19 @@ class JsPdfSink implements PdfSink {
 
   textColor(rgb: Rgb): void {
     this.doc.setTextColor(rgb[0], rgb[1], rgb[2])
+  }
+
+  setFont(family: 'latin' | 'cjk'): void {
+    if (family === 'cjk') {
+      if (!this.cjkFontReady) {
+        this.doc.addFileToVFS(CJK_FONT_FILE, PINDOU_BOM_CJK_FONT_BASE64)
+        this.doc.addFont(CJK_FONT_FILE, CJK_FONT_NAME, 'normal', 'Identity-H')
+        this.cjkFontReady = true
+      }
+      this.doc.setFont(CJK_FONT_NAME, 'normal')
+      return
+    }
+    this.doc.setFont('helvetica', 'normal')
   }
 
   strokeColor(rgb: Rgb): void {

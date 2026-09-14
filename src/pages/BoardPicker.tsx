@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useId } from 'react'
 import { Trash } from '@phosphor-icons/react'
 
 import {
@@ -15,8 +15,13 @@ const ORDER: BoardTypeId[] = ['mini26', 'mini52', 'mini78', 'mini104', 'midi29']
 export default function BoardPicker() {
   const placements = useEditor((s) => s.layout.placements)
   const removeBoard = useEditor((s) => s.removeBoard)
+  const selectedBoard = useEditor((s) => s.selectedBoard)
+  const setSelectedBoard = useEditor((s) => s.setSelectedBoard)
   const copy = t('picker')
-  const [selected, setSelected] = useState<BoardTypeId>('mini52')
+
+  const chooseBoard = (board: BoardTypeId) => {
+    setSelectedBoard(board)
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -30,17 +35,18 @@ export default function BoardPicker() {
               <div className="grid grid-cols-2 gap-2">
                 {ORDER.filter((id) => BOARD_PROFILES[id].pitchMm === pitch).map((id) => {
                   const profile = BOARD_PROFILES[id]
-                  const active = selected === id
+                  const active = selectedBoard === id
                   return (
                     <button
                       key={id}
                       type="button"
                       draggable
+                      aria-pressed={active}
                       aria-label={profile.label}
                       title={profile.label}
-                      onClick={() => setSelected(id)}
+                      onClick={() => chooseBoard(id)}
                       onDragStart={(event) => {
-                        setSelected(id)
+                        chooseBoard(id)
                         event.dataTransfer.setData('text/pindou-board', id)
                         event.dataTransfer.effectAllowed = 'copy'
                       }}
@@ -56,6 +62,10 @@ export default function BoardPicker() {
             </section>
           ))}
         </div>
+
+        <p className="mt-4 rounded-lg border border-accent/35 bg-hover/60 p-2.5 text-[11px] leading-4 text-ink-2">
+          {copy.dragHint}
+        </p>
 
         <section className="mt-4 border-t border-line pt-3">
           <h3 className="mb-2 text-xs font-medium text-ink-2">
@@ -103,7 +113,8 @@ function BoardThumbnail({
   const pegs = BOARD_PROFILES[board].pegs
   const guide = boardGuide({ board, c0: 0, r0: 0 })
   const patternId = `peg-${useId().replaceAll(':', '')}`
-  const pad = 10
+  // 选择卡片空间有限：给大缩略图多留一圈安全边距，让尺寸文字也落在图内。
+  const pad = size >= 80 ? 14 : 10
   const view = `${-pad} ${-pad} ${pegs + pad * 2} ${pegs + pad * 2}`
   const guideWidth = Math.max(0.28, pegs / 300)
   const fontSize = labelPx * (pegs + pad * 2) / (size + 18)
@@ -114,7 +125,7 @@ function BoardThumbnail({
       width={size + 18}
       height={size + 18}
       viewBox={view}
-      className="shrink-0 overflow-visible"
+      className="block h-auto max-w-full shrink-0 overflow-visible"
       shapeRendering="geometricPrecision"
     >
       <defs>

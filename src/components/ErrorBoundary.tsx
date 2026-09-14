@@ -1,6 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 
-import { navigate } from '../router'
 import { t } from '../i18n/zh'
 
 interface State {
@@ -10,7 +9,7 @@ interface State {
 /**
  * 兜底：组件崩了不要留一页白屏 —— 用户会以为"什么都没了"。
  *
- * 面向用户只给稳定文案 + 能自己动手的出路（回作品库 / 刷新）；
+ * 面向用户只给稳定文案 + 能自己动手的出路（重试 / 刷新）；
  * 原始 message 和 stack 只在开发模式展开 —— 生产环境的异常文本里可能带
  * 内部路径甚至用户数据，不该直接摆在界面上（P2-22）。
  */
@@ -40,10 +39,9 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
             className="rounded border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-sm text-white"
             onClick={() => {
               this.setState({ error: null })
-              navigate('library')
             }}
           >
-            {copy.toLibrary}
+            {copy.retry}
           </button>
           <button
             type="button"

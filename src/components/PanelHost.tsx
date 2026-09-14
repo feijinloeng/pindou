@@ -15,11 +15,14 @@ import { Z } from './overlayState'
 
 const TITLES: Record<PanelId, string> = {
   library: t('nav').library,
-  boards: t('picker').models,
+  boards: t('editor').launchBoards,
   image: t('convert').title,
   color: t('editor').colors,
   transform: t('editor').transformTitle,
 }
+
+// 所有常规临时面板共用同一套外框：与工具岛顶部对齐，底部贴近工作区，宽度统一。
+const SIDE_PANEL_FRAME = 'top-4 bottom-4 left-4 w-80 overflow-hidden rounded-xl border border-line bg-surface shadow-lg'
 
 /**
  * 辅助面板宿主（spec 5.5）：同一时间一个面板，浮在画布左上，不挤压画布、不动缩放。
@@ -58,6 +61,13 @@ export default function PanelHost() {
   const body = (
     <div
       ref={contentRef}
+      onPointerDown={
+        imagePanel
+          ? (event) => {
+              if (event.target === event.currentTarget) openPanel(null)
+            }
+          : undefined
+      }
       className={imagePanel ? 'pointer-events-auto flex min-h-0 flex-1 items-center justify-center' : 'flex min-h-0 flex-1 flex-col'}
     >
       {shown === 'library' ? (
@@ -78,7 +88,7 @@ export default function PanelHost() {
     // 移动 sheet 是模态：焦点圈内、背景惰性、Escape/背板关闭（Modal 都包了）
     return (
       <Modal open={open} onClose={() => openPanel(null)} title={TITLES[shown]} sheet>
-        {shown === 'boards' ? <PanelClose onClose={() => openPanel(null)} /> : <PanelHeader shown={shown} onClose={() => openPanel(null)} />}
+        <PanelHeader shown={shown} onClose={() => openPanel(null)} />
         {body}
       </Modal>
     )
@@ -91,15 +101,13 @@ export default function PanelHost() {
       style={{ zIndex: Z.panel }}
       className={`absolute flex flex-col ${
         imagePanel
-          ? 'inset-0 pointer-events-none'
+          ? 'inset-0'
           : shown === 'library'
             ? 'inset-x-0 top-24 mx-auto max-h-[calc(100vh-6rem)] w-[92vw] max-w-[92vw] overflow-y-auto max-lg:top-40'
-            : shown === 'boards'
-            ? 'top-4 bottom-4 left-4 w-96 overflow-hidden rounded-xl border border-line bg-surface shadow-lg'
-            : 'top-28 bottom-4 left-4 w-80 overflow-hidden rounded-xl border border-line bg-surface shadow-lg max-lg:top-40'
+            : SIDE_PANEL_FRAME
       } ${exiting ? 'pointer-events-none' : ''}`}
     >
-      {shown === 'library' || imagePanel ? null : shown === 'boards' ? <PanelClose onClose={() => openPanel(null)} /> : <PanelHeader shown={shown} onClose={() => openPanel(null)} />}
+      {shown === 'library' ? null : imagePanel ? <PanelClose onClose={() => openPanel(null)} /> : <PanelHeader shown={shown} onClose={() => openPanel(null)} />}
       {body}
     </aside>
   )
@@ -123,23 +131,32 @@ function PanelClose({ onClose }: { onClose: () => void }) {
 function PanelHeader({ shown, onClose }: { shown: PanelId; onClose: () => void }) {
   const colorPinned = useEditor((s) => s.colorPinned)
   const setColorPinned = useEditor((s) => s.setColorPinned)
+  const boardPinned = useEditor((s) => s.boardPinned)
+  const setBoardPinned = useEditor((s) => s.setBoardPinned)
   const copy = t('editor')
+  const pin =
+    shown === 'color'
+      ? { pinned: colorPinned, setPinned: setColorPinned, hint: copy.pinColorHint }
+      : shown === 'boards'
+        ? { pinned: boardPinned, setPinned: setBoardPinned, hint: copy.pinBoardHint }
+        : null
+
   return (
     <header className="flex h-12 shrink-0 items-center gap-1 border-b border-line px-3">
       <h2 className="text-base font-semibold">{TITLES[shown]}</h2>
       <div className="ml-auto flex items-center gap-1">
-        {shown === 'color' && (
+        {pin && (
           <button
             type="button"
-            aria-pressed={colorPinned}
-            aria-label={copy.pinColorHint}
-            title={copy.pinColorHint}
-            onClick={() => setColorPinned(!colorPinned)}
+            aria-pressed={pin.pinned}
+            aria-label={pin.hint}
+            title={pin.hint}
+            onClick={() => pin.setPinned(!pin.pinned)}
             className={`flex h-8 w-8 items-center justify-center rounded-lg ${
-              colorPinned ? 'bg-accent text-on-accent' : 'text-ink-2 hover:bg-hover'
+              pin.pinned ? 'bg-accent text-on-accent' : 'text-ink-2 hover:bg-hover'
             }`}
           >
-            <PushPin size={14} weight={colorPinned ? 'fill' : 'regular'} aria-hidden />
+            <PushPin size={14} weight={pin.pinned ? 'fill' : 'regular'} aria-hidden />
           </button>
         )}
         <button

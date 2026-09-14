@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DotsThreeVertical, MagnifyingGlass, Plus, X } from '@phosphor-icons/react'
+import { DotsThree, MagnifyingGlass, Plus, X } from '@phosphor-icons/react'
 
 import { getPalette } from '../data/palettes'
 import { deriveLayoutGeometry } from '../domain/board'
@@ -13,7 +13,6 @@ import {
 } from '../domain/project'
 import { useEditor } from '../editor/store'
 import { gsap, MOTION, reducedMotion } from '../motion'
-import { navigate } from '../router'
 import { downloadBytes, safeName } from '../render/download'
 import { renderThumbnailDataUrl } from '../render/thumbnail'
 import {
@@ -92,8 +91,7 @@ export default function Library({
       // 草稿比正式工程新 = 这份内容还没经过一次正式保存，导出前要先保存
       useEditor.getState().loadProject(target, !entry?.hasNewerDraft)
       setError(null)
-      if (embedded) onClose?.()
-      else navigate('editor')
+      onClose?.()
     } catch (cause) {
       setError(`打开失败：${message(cause)}`)
     }
@@ -422,7 +420,7 @@ function ProjectCard({
 
   return (
     <article
-      className={`${embedded ? 'w-[min(82vw,300px)]' : ''} flex flex-col rounded-xl border bg-surface ${
+      className={`${embedded ? 'w-[min(82vw,300px)]' : ''} relative flex flex-col rounded-xl border bg-surface ${
         deleted ? 'border-dashed border-line' : 'border-line'
       }`}
     >
@@ -431,7 +429,7 @@ function ProjectCard({
         onClick={onOpen}
         disabled={busy}
         aria-label={`${copy.open}《${cleanName(project.name)}》`}
-        className="group block overflow-hidden rounded-t-xl text-left"
+        className="group block overflow-hidden rounded-xl text-left"
       >
         {/* 4:3 预览区：图案本身是最大的视觉，操作都让开 */}
         <div className="flex aspect-[4/3] items-center justify-center border-b border-line bg-hover">
@@ -461,15 +459,15 @@ function ProjectCard({
           </p>
         </div>
       </button>
-      <div className="flex items-center gap-1 border-t border-line px-2 py-1.5">
-        <span className="ml-auto" />
+      <div className="absolute top-2 right-2 z-10 rounded-lg bg-surface/90 shadow-sm backdrop-blur-sm">
         <Menu
-          label={<DotsThreeVertical size={15} aria-hidden />}
+          label={<DotsThree size={17} aria-hidden />}
           title={copy.more}
           align="right"
           width="w-48"
           triggerVariant="ghost"
-          placement="top"
+          placement="bottom"
+          compact
         >
           {(close) => (
             <>

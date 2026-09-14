@@ -13,7 +13,6 @@ import { useEditor, type ToolId } from '../editor/store'
 import { gsap, MOTION, reducedMotion, useGSAP } from '../motion'
 
 const TOOL_KEYS: Record<string, ToolId> = {
-  v: 'select',
   b: 'pencil',
   e: 'eraser',
   i: 'picker',
@@ -39,7 +38,7 @@ export default function Editor() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // 正在输入框/下拉框里打字，或输入法正在组合：快捷键让路，别抢 V/B/E/I/G/M、Cmd+A、Cmd+C
+      // 正在输入框/下拉框里打字，或输入法正在组合：快捷键让路，别抢 B/E/I/G/M、Cmd+A、Cmd+C
       if (!shouldHandleCanvasKey(e)) return
       const s = useEditor.getState()
       // 导出页不是画布：除了 Escape，快捷键一律不响应

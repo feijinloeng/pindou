@@ -2,7 +2,7 @@ import { boardGuide, type BoardGeometry } from '../domain/board'
 import { EMPTY, isPlaceable, type CellGrid } from '../domain/grid'
 import { PT_PER_MM } from '../domain/geometry'
 import { hexToRgb, type Palette, labelTextColor } from '../domain/palette'
-import { buildBom, drawBom } from './bom'
+import { bomPageCount, bomRowsPerPage, buildBom, drawBom, paletteDisplayLabel, totalBeads } from './bom'
 import { planAnnotations, screenLayout, SCREEN_PAD_PT, type AnnotationPlan } from './documentLayout'
 import { BOARD_BG } from './colors'
 import { gray255, type PdfSink } from './pdf'
@@ -13,8 +13,8 @@ export const THIN_GRID = { widthPt: 0.25, rgb: gray255(0.6) }
 export const BOARD_GUIDE = { widthPt: THIN_GRID.widthPt, rgb: [0, 0, 0] as [number, number, number] }
 /** 每个 10×10 单元中间的 5×5 黑色虚线十字，线宽同样不加粗 */
 export const BOARD_GUIDE_DASH = { widthPt: THIN_GRID.widthPt, rgb: [0, 0, 0] as [number, number, number] }
-/** 页缝蓝色虚线；和实体板的黑色线分开 */
-export const SHEET_SEAM = { widthPt: 0.8, rgb: [26, 89, 217] as [number, number, number] }
+/** 打印纸页的红色拼接线；和实体板的黑色定位线分开 */
+export const SHEET_SEAM = { widthPt: 0.9, rgb: [210, 43, 43] as [number, number, number] }
 
 export interface ScreenPdfOptions {
   grid: CellGrid
@@ -94,14 +94,22 @@ export function renderScreenPdf(sink: PdfSink, options: ScreenPdfOptions): Scree
   // 用量清单（末页）
   if (options.includeBom) {
     const bomPageHeight = 841.89
-    sink.addPage(595.28, bomPageHeight)
     const rows = buildBom(grid, palette)
-    drawBom(sink, rows, {
-      x: 40,
-      yTop: bomPageHeight - 60,
-      width: 515,
-      title: `${palette.brand} · ${options.pitchLabel}mm`,
-    })
+    const bomPages = bomPageCount(rows.length, bomPageHeight)
+    const rowsPerPage = bomRowsPerPage(bomPageHeight)
+    for (let pageIndex = 0; pageIndex < bomPages; pageIndex++) {
+      sink.addPage(595.28, bomPageHeight)
+      const pageRows = rows.slice(pageIndex * rowsPerPage, (pageIndex + 1) * rowsPerPage)
+      const pageLabel = bomPages > 1 ? ` · 第 ${pageIndex + 1}/${bomPages} 页` : ''
+      drawBom(sink, pageRows, {
+        x: 40,
+        yTop: bomPageHeight - 60,
+        width: 515,
+        title: `${paletteDisplayLabel(palette)} · ${options.pitchLabel} 毫米 · 用量清单${pageLabel}`,
+        showSummary: pageIndex === bomPages - 1,
+        summary: { total: totalBeads(rows), colors: rows.length },
+      })
+    }
   }
 
   return {
@@ -332,7 +340,7 @@ export function drawCoordinates(
 }
 
 /**
- * 画标注：大标签打在最大内接正方形里，逐格标打在格心。
+ * 画标注：大标签打在最大内接正方形里，逐格标打在格心；文字只用黑或白。
  * ⚠️ 文字色必须按底色亮度算，不能硬编码黑 —— 深色区域上的黑字是隐形的。
  */
 export function drawAnnotations(
@@ -343,33 +351,35 @@ export function drawAnnotations(
   sheet: { col0: number; row0: number; cols: number; rows: number },
   origin: { x: number; y: number },
   P: number,
+  options: { ensureVisibleCodes?: boolean } = {},
 ): number {
   let objects = 0
+  const drawnColors = new Set<number>()
   const groups = new Map<
     string,
     {
       items: Array<{ text: string; x: number; baselineY: number }>
       size: number
       fill: [number, number, number]
-      mode: 'fill' | 'fillstroke'
     }
   >()
 
   const push = (
+    colorIndex: number,
     code: string,
     centerX: number,
     centerY: number,
     size: number,
     hex: string,
-    mode: 'fill' | 'fillstroke',
   ) => {
+    drawnColors.add(colorIndex)
     const light = labelTextColor(hex) === 'black'
     const fill: [number, number, number] = light ? [0, 0, 0] : [255, 255, 255]
     const rounded = Math.round(size * 100) / 100
-    const key = `${rounded}|${fill.join(',')}|${mode}`
+    const key = `${rounded}|${fill.join(',')}`
     let group = groups.get(key)
     if (!group) {
-      group = { items: [], size: rounded, fill, mode }
+      group = { items: [], size: rounded, fill }
       groups.set(key, group)
     }
     const laid = layoutCellText(code, centerX, centerY, rounded)
@@ -385,12 +395,12 @@ export function drawAnnotations(
     const color = palette.colors[label.colorIndex]
     // 内接正方形的中心
     push(
+      label.colorIndex,
       plan.codeFor[label.colorIndex],
       origin.x + (localCol + label.size / 2) * P,
       origin.y + (sheet.rows - localRow - label.size / 2) * P,
       label.fontSizePt,
       color.hex,
-      'fill',
     )
   }
 
@@ -402,24 +412,70 @@ export function drawAnnotations(
       const color = palette.colors[value]
       if (!color) continue
       push(
+        value,
         plan.codeFor[value],
         origin.x + (x + 0.5) * P,
         origin.y + (sheet.rows - y - 0.5) * P,
         plan.cellFontPt[value],
         color.hex,
-        'fillstroke',
       )
     }
   }
 
-  // 逐格标注要加反色光环，先按组把描边色设好，再一次性出文字
-  for (const group of [...groups.values()].sort((a, b) => a.size - b.size)) {
-    if (group.mode === 'fillstroke') {
-      const light = group.fill[0] === 0
-      sink.strokeColor(light ? [255, 255, 255] : [0, 0, 0])
-      sink.lineWidth(Math.max(0.15, group.size * 0.12))
+  // A large region can cross a page boundary: its global center label and outer ring
+  // may both land on other pages. Keep every paper page self-explanatory by adding a
+  // quiet fallback label for colors that are present here but have no visible mark.
+  if (options.ensureVisibleCodes) {
+    const bounds = new Map<
+      number,
+      { minX: number; minY: number; maxX: number; maxY: number; count: number }
+    >()
+    for (let y = 0; y < sheet.rows; y++) {
+      for (let x = 0; x < sheet.cols; x++) {
+        const gi = (sheet.row0 + y) * grid.cols + sheet.col0 + x
+        const value = grid.cells[gi]
+        if (value === EMPTY || !isPlaceable(grid, gi) || drawnColors.has(value)) continue
+        const current = bounds.get(value)
+        if (current) {
+          current.minX = Math.min(current.minX, x)
+          current.minY = Math.min(current.minY, y)
+          current.maxX = Math.max(current.maxX, x)
+          current.maxY = Math.max(current.maxY, y)
+          current.count++
+        } else {
+          bounds.set(value, { minX: x, minY: y, maxX: x, maxY: y, count: 1 })
+        }
+      }
     }
-    sink.textBatch(group.items, group.size, group.fill, group.mode)
+    for (const [value, bound] of bounds) {
+      const color = palette.colors[value]
+      if (!color) continue
+      const span = Math.min(bound.maxX - bound.minX + 1, bound.maxY - bound.minY + 1)
+      const area = (bound.maxX - bound.minX + 1) * (bound.maxY - bound.minY + 1)
+      const code = plan.codeFor[value]
+      const cellSize = plan.cellFontPt[value]
+      const largeSize = Math.min(
+        18,
+        span * P * 0.55,
+        (span * P * 1.45) / Math.max(1, code.length),
+      )
+      const size = span >= 3 && bound.count / area >= 0.72 && largeSize >= cellSize * 1.8
+        ? largeSize
+        : cellSize
+      push(
+        value,
+        code,
+        origin.x + ((bound.minX + bound.maxX + 1) / 2) * P,
+        origin.y + (sheet.rows - (bound.minY + bound.maxY + 1) / 2) * P,
+        size,
+        color.hex,
+      )
+    }
+  }
+
+  // Group same-size, same-color text so every value is rendered as a plain fill.
+  for (const group of [...groups.values()].sort((a, b) => a.size - b.size)) {
+    sink.textBatch(group.items, group.size, group.fill, 'fill')
   }
   return objects
 }
@@ -440,7 +496,7 @@ export function layoutCellText(
   centerY: number,
   fontSizePt: number,
 ): { x: number; y: number; width: number; capHeight: number } {
-  const width = fontSizePt * 0.5 * code.length // Helvetica 平均字宽 ≈ 0.5 em
+  const width = fontSizePt * 0.62 * code.length // Helvetica 字符平均宽度，含小格内横向留白
   const capHeight = fontSizePt * 0.72 // 大写字高
   return {
     x: centerX - width / 2,
@@ -458,15 +514,12 @@ export function drawCellText(
   centerY: number,
   fontSizePt: number,
   cellHex: string,
-  mode: 'cell' | 'black',
+  _mode: 'cell' | 'black',
 ): void {
   const laid = layoutCellText(code, centerX, centerY, fontSizePt)
   const light = labelTextColor(cellHex) === 'black'
   const fill: [number, number, number] = light ? [0, 0, 0] : [255, 255, 255]
   sink.textColor(fill)
-  if (mode === 'cell') {
-    sink.strokeColor(light ? [255, 255, 255] : [0, 0, 0])
-    sink.lineWidth(Math.max(0.15, fontSizePt * 0.12))
-  }
-  sink.text(code, laid.x, laid.y, fontSizePt, mode === 'cell' ? 'fillstroke' : 'fill')
+  // The code itself is the only label mark: no outline or halo around it.
+  sink.text(code, laid.x, laid.y, fontSizePt, 'fill')
 }

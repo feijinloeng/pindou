@@ -5,7 +5,11 @@ import { usedCells } from '../domain/grid'
 import { useEditor } from '../editor/store'
 import { t } from '../i18n/zh'
 import { downloadBytes } from '../render/download'
-import { buildExportBundle, type ExportContext, type ExportSelection } from '../render/exporters'
+import {
+  buildExportBundle,
+  type ExportContext,
+  type ExportSelection,
+} from '../render/exporters'
 import { PREVIEW_SCALES } from '../render/previewImage'
 import { renderThumbnailDataUrl } from '../render/thumbnail'
 import { useOverlayEscape } from './overlayState'
@@ -18,9 +22,8 @@ interface ExportFlags {
 }
 
 /**
- * 导出（spec 9）：左边真实预览，右边 323px 输出列。
- * 四个输出可一起选（至少留一个），选项只跟着被选的那行展开；
- * 预估和警告在导出按钮之前常显。多个输出仍然打包成一个 zip。
+ * 导出：真实预览居中，格式开关保持在画布下方的一行。
+ * 只有选中打印版后才在按钮行下方显示它的专属设置；多个输出仍然打包成一个 zip。
  */
 export default function ExportStage() {
   const grid = useEditor((s) => s.grid)
@@ -34,6 +37,10 @@ export default function ExportStage() {
     screen: true,
     paper: false,
   })
+  // 精简布局不展开导出选项，打印版沿用默认的 3 格重叠和色号标注。
+  const previewScale = PREVIEW_SCALES.print
+  const screenCodes = true
+  const screenBom = true
   const [busy, setBusy] = useState(false)
   const [thumb, setThumb] = useState<string | null>(null)
   const copy = t('export')
@@ -41,15 +48,22 @@ export default function ExportStage() {
   // Escape = 返回编辑；导出进行中不让退（文件生成到一半走了会以为失败）
   useOverlayEscape(!busy, closeExport)
 
-  const selection: ExportSelection = {
-    ...flags,
-    csv: false,
-    paperScope: 'boards',
-    showCodes: false,
-    screenCodes: true,
-    screenBom: true,
-    previewScale: PREVIEW_SCALES.print,
-  }
+  const context = useMemo<ExportContext>(
+    () => ({ grid, palette, geom, pitchMm, name }),
+    [grid, palette, geom, pitchMm, name],
+  )
+  const selection = useMemo<ExportSelection>(
+    () => ({
+      ...flags,
+      paperScope: 'whole',
+      showCodes: true,
+      paperOverlap: 3,
+      screenCodes,
+      screenBom,
+      previewScale,
+    }),
+    [flags, screenCodes, screenBom, previewScale],
+  )
 
   // 成品预览：空画布直接说清楚，别让用户导出个空白
   const empty = useMemo(
@@ -76,8 +90,7 @@ export default function ExportStage() {
   const run = async () => {
     setBusy(true)
     try {
-      const ctx: ExportContext = { grid, palette, geom, pitchMm, name }
-      const bundle = await buildExportBundle(ctx, selection)
+      const bundle = await buildExportBundle(context, selection)
       // 只触发一次下载：多选已打包成 zip，浏览器不会拦
       downloadBytes(bundle.bytes, bundle.filename, bundle.mime)
       const head = bundle.files > 1 ? copy.exportBundled(bundle.files) : copy.exportDone
@@ -101,7 +114,7 @@ export default function ExportStage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">
-          {/* 左：真实预览，占足视觉空间 */}
+          {/* 真实预览保持居中，导出开关放在画布下方 */}
           <section
             aria-label={copy.previewTitle}
             className="flex items-center justify-center rounded-xl border border-line bg-surface p-4"
@@ -121,8 +134,11 @@ export default function ExportStage() {
             )}
           </section>
 
-          <div className="flex w-full flex-col items-center gap-4">
-            <fieldset disabled={busy} className="flex flex-wrap items-center justify-center gap-2 border-0 p-0">
+          <div className="flex w-full flex-col items-center gap-3">
+            <fieldset
+              disabled={busy}
+              className="flex flex-wrap items-center justify-center gap-2 border-0 p-0"
+            >
               <OutputRow
                 checked={flags.preview}
                 onToggle={(v) => toggle('preview', v)}
@@ -139,7 +155,7 @@ export default function ExportStage() {
                 title={copy.optionPrint}
               />
               <Btn variant="primary" onClick={() => void run()} disabled={busy || empty}>
-                {busy ? copy.exporting : copy.title}
+                {busy ? copy.exporting : copy.run}
               </Btn>
             </fieldset>
 
@@ -150,7 +166,7 @@ export default function ExportStage() {
   )
 }
 
-/** 一个输出 = 一整行可选；勾上才在这行底下展开它自己的选项 */
+/** 一个输出 = 下方横排中的精简格式开关。 */
 function OutputRow({
   checked,
   onToggle,

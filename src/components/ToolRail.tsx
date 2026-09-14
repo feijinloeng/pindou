@@ -3,7 +3,6 @@ import {
   ArrowCounterClockwise,
   ArrowsClockwise,
   Books,
-  CursorClick,
   Eraser,
   Eyedropper,
   Hand,
@@ -31,13 +30,12 @@ import { Tip } from './ui'
  * 画布让给图案，工具悬浮在上方；按压只缩内部视觉层，靶子不动。
  */
 const TOOLS: Array<{ id: ToolId; icon: React.ReactNode; key: string }> = [
-  { id: 'select', icon: <CursorClick size={17} aria-hidden />, key: 'V' },
-  { id: 'rect', icon: <Selection size={17} aria-hidden />, key: 'M' },
   { id: 'pan', icon: <Hand size={17} aria-hidden />, key: 'H' },
   { id: 'pencil', icon: <Pencil size={17} aria-hidden />, key: 'B' },
-  { id: 'eraser', icon: <Eraser size={17} aria-hidden />, key: 'E' },
   { id: 'bucket', icon: <PaintBucket size={17} aria-hidden />, key: 'G' },
   { id: 'picker', icon: <Eyedropper size={17} aria-hidden />, key: 'I' },
+  { id: 'eraser', icon: <Eraser size={17} aria-hidden />, key: 'E' },
+  { id: 'rect', icon: <Selection size={17} aria-hidden />, key: 'M' },
 ]
 
 export default function ToolDock() {
@@ -83,21 +81,20 @@ export default function ToolDock() {
       onClick: () => openPanel(panel === 'color' ? null : 'color'),
       expanded: panel === 'color',
     },
-    {
-      id: 'transform',
-      label: copy.launchTransform,
-      icon: <ArrowsClockwise size={17} aria-hidden />,
-      onClick: () => openPanel(panel === 'transform' ? null : 'transform'),
-      expanded: panel === 'transform',
-    },
   ]
+
+  const transformLauncher = {
+    label: copy.launchTransform,
+    icon: <ArrowsClockwise size={17} aria-hidden />,
+    onClick: () => openPanel(panel === 'transform' ? null : 'transform'),
+    expanded: panel === 'transform',
+  }
 
   const names: Record<ToolId, { name: string; hint: string }> = {
     pencil: { name: copy.toolPencil, hint: copy.toolPencilHint },
     eraser: { name: copy.toolEraser, hint: copy.toolEraserHint },
     bucket: { name: copy.toolBucket, hint: copy.toolBucketHint },
     picker: { name: copy.toolPicker, hint: copy.toolPickerHint },
-    select: { name: copy.toolSelect, hint: copy.toolSelectHint },
     rect: { name: copy.toolRect, hint: copy.toolRectHint },
     pan: { name: copy.toolPan, hint: copy.toolPanHint },
   }
@@ -121,6 +118,9 @@ export default function ToolDock() {
             <Books size={17} aria-hidden />
           </button>
         </Tip>
+
+        <div aria-hidden className="mx-1 h-6 w-px bg-line" />
+
         <Tip label={copy.newProject} placement="bottom">
           <button
             type="button"
@@ -160,6 +160,20 @@ export default function ToolDock() {
             {item.icon}
           </DockButton>
         ))}
+
+        <Tip label={transformLauncher.label} placement="bottom">
+          <button
+            type="button"
+            aria-expanded={transformLauncher.expanded}
+            onClick={transformLauncher.onClick}
+            aria-label={transformLauncher.label}
+            className={`flex h-10 w-10 items-center justify-center rounded-lg text-sm ${
+              transformLauncher.expanded ? 'bg-hover font-medium text-accent' : 'text-ink hover:bg-hover'
+            }`}
+          >
+            {transformLauncher.icon}
+          </button>
+        </Tip>
 
         <div aria-hidden className="mx-1 h-6 w-px bg-line" />
 

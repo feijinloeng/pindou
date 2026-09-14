@@ -12,7 +12,13 @@ import {
 } from '../domain/board'
 import { EMPTY, type CellGrid, createGrid, inBounds } from '../domain/grid'
 import { type Palette } from '../domain/palette'
-import { allowedMask, defaultColorIndex, getPalette, paletteRgb } from '../data/palettes'
+import {
+  allowedMask,
+  DEFAULT_PALETTE_ID,
+  defaultColorIndex,
+  getPalette,
+  paletteRgb,
+} from '../data/palettes'
 import { createMatcher } from '../conversion/match'
 import { EDITOR_FIT_PAD, fitViewport, type Viewport } from '../render/canvasViewport'
 import { History, PatchRecorder, type CellPatch, type HistoryMeta } from './history'
@@ -46,7 +52,7 @@ import type { Rgb } from '../conversion/colorDistance'
 import type { SourceImage } from '../conversion/types'
 import { t } from '../i18n/zh'
 
-export type ToolId = 'select' | 'pencil' | 'eraser' | 'picker' | 'bucket' | 'rect' | 'pan'
+export type ToolId = 'pencil' | 'eraser' | 'picker' | 'bucket' | 'rect' | 'pan'
 
 /** 画布旁边同一时间只开一个临时面板。transform 是纯展示面板（整图变换），不动 store 数据 */
 export type PanelId = 'boards' | 'color' | 'image' | 'transform' | 'library'
@@ -77,7 +83,11 @@ export interface EditorState {
   /** 允许使用的色号白名单。null = 全部可用 */
   allowedCodes: string[] | null
   colorIndex: number
+  /** 板面板当前选中的型号，只是界面状态，不写入工程文件 */
+  selectedBoard: BoardTypeId
   tool: ToolId
+  /** 吸色管取色成功后要回到的工具 */
+  toolBeforePicker: ToolId
   selection: Selection
   clipboard: Clip | null
   vp: Viewport
@@ -127,6 +137,7 @@ export interface EditorState {
   restoreLast(): Promise<boolean>
   setTool(tool: ToolId): void
   setColor(index: number): void
+  setSelectedBoard(board: BoardTypeId): void
   setPalette(id: string): void
   toggleCode(code: string): void
   restoreAllCodes(): void
@@ -136,12 +147,15 @@ export interface EditorState {
   panel: PanelId | null
   /** 颜色面板钉住：连续取色时不自动关 */
   colorPinned: boolean
+  /** 底板面板钉住：连续选板时不自动关 */
+  boardPinned: boolean
   /** 当前目的地：编辑 / 导出 */
   stage: Stage
   /** 保存那一刻的 commitVersion。等于当前值才允许直接去导出 */
   savedCommitVersion: number | null
   openPanel(panel: PanelId | null): void
   setColorPinned(pinned: boolean): void
+  setBoardPinned(pinned: boolean): void
   openExport(): void
   closeExport(): void
   pointerDown(col: number, row: number, button: number, shift: boolean): void
@@ -214,6 +228,7 @@ function emptyBoard() {
 }
 
 const initial = emptyBoard()
+const defaultPalette = getPalette(DEFAULT_PALETTE_ID)
 
 type PlacementShift = { placements: BoardPlacement[]; col: number; row: number }
 
@@ -255,6 +270,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   customer: null,
   panel: null,
   colorPinned: false,
+  // 排板是连续操作：默认保持面板打开，用户仍可手动取消钉住来恢复一次性添加。
+  boardPinned: true,
   stage: 'edit',
   savedCommitVersion: null,
   createdAt: new Date().toISOString(),
@@ -265,11 +282,13 @@ export const useEditor = create<EditorState>((set, get) => ({
   grid: createGrid(initial.geom.cols, initial.geom.rows, EMPTY, initial.geom.placeable),
   version: 0,
   commitVersion: 0,
-  palette: getPalette('mard-291'),
-  paletteId: 'mard-291',
+  palette: defaultPalette,
+  paletteId: DEFAULT_PALETTE_ID,
   allowedCodes: null,
-  colorIndex: defaultColorIndex(getPalette('mard-291')),
+  colorIndex: defaultColorIndex(defaultPalette),
+  selectedBoard: 'mini52',
   tool: 'pencil',
+  toolBeforePicker: 'pencil',
   selection: [],
   clipboard: null,
   vp: fitViewport(initial.geom.cols, initial.geom.rows, 900, 700),
@@ -396,6 +415,10 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   setColorPinned(colorPinned) {
     set({ colorPinned })
+  },
+
+  setBoardPinned(boardPinned) {
+    set({ boardPinned })
   },
 
   openExport() {
@@ -558,7 +581,12 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   setTool(tool) {
     rectAnchor = null
-    set({ tool, notice: null })
+    const current = get().tool
+    set({
+      tool,
+      toolBeforePicker: tool === 'picker' && current !== 'picker' ? current : get().toolBeforePicker,
+      notice: null,
+    })
   },
   setColor(index) {
     const { palette, allowedCodes, colorIndex } = get()
@@ -577,6 +605,10 @@ export const useEditor = create<EditorState>((set, get) => ({
       colorIndex: keep ?? (fallback >= 0 ? fallback : defaultColorIndex(palette)),
       notice: '这个色号当前不可用，已经换成别的色号',
     })
+  },
+
+  setSelectedBoard(board) {
+    if (findBoardProfile(board)) set({ selectedBoard: board })
   },
 
   /** 换色板：旧色板里用到的每个色都重映射到新色板的最近色 */
@@ -686,7 +718,7 @@ export const useEditor = create<EditorState>((set, get) => ({
 
     if (tool === 'picker') {
       const picked = pickColor(grid, col, row)
-      if (picked !== null) set({ colorIndex: picked })
+      if (picked !== null) set({ colorIndex: picked, tool: state.toolBeforePicker })
       return
     }
 
@@ -701,14 +733,6 @@ export const useEditor = create<EditorState>((set, get) => ({
       recording = new PatchRecorder(grid, '油漆桶')
       const n = floodFill(recording, grid, col, row, colorIndex)
       commitRecording(set, get, n > 0 ? `油漆桶 ${n} 格` : null)
-      return
-    }
-
-    // 点选：立刻提交一格
-    if (tool === 'select') {
-      recording = new PatchRecorder(grid, '点选')
-      paint(recording, grid, col, row, colorIndex)
-      commitRecording(set, get, null)
       return
     }
 

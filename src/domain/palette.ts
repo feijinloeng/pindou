@@ -19,6 +19,20 @@ export interface Palette {
   source?: { repo: string; license: string; retrievedAt: string }
 }
 
+/** Known Chinese palette names used in exported document titles. */
+const PALETTE_ZH_NAMES: Record<string, string> = {
+  MARD: '曼德',
+}
+
+/** English palette brand followed by its known Chinese name when available. */
+export function paletteDisplayLabel(palette: Pick<Palette, 'brand' | 'displayName'>): string {
+  const zhName = PALETTE_ZH_NAMES[palette.brand]
+  if (!zhName) return palette.displayName
+  if (!palette.displayName.startsWith(palette.brand)) return `${palette.brand}（${zhName}）`
+  const suffix = palette.displayName.slice(palette.brand.length).replace(/^\s+/, '')
+  return suffix ? `${palette.brand}（${zhName}） ${suffix}` : `${palette.brand}（${zhName}）`
+}
+
 export function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
   return [

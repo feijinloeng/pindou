@@ -1,33 +1,25 @@
-import { useEffect, useState } from 'react'
-
 /**
- * 两个页面，用 hash 路由。纯静态工具不需要 router 依赖，静态托管也直接能跑。
+ * 顶层只有编辑器。纯静态工具保留 hash 地址以兼容已有链接。
+ * 旧的 `#/library` 不再渲染独立页面，会被归一到 `#/editor`。
  * 形如 `#/editor`。
  */
-export type Route = 'library' | 'editor'
+export type Route = 'editor'
 
-const ROUTES: Route[] = ['library', 'editor']
-
-export function parseHash(hash: string): Route {
-  const name = hash.replace(/^#\/?/, '').split('?')[0]
-  return (ROUTES as string[]).includes(name) ? (name as Route) : 'library'
+export function parseHash(_hash: string): Route {
+  return 'editor'
 }
 
-/** 没有 window 时（SSR / 冒烟测试）也读得出一个默认路由 */
-function currentHash(): string {
-  return typeof window === 'undefined' ? '' : window.location.hash
+export function normalizeLegacyHash(): void {
+  if (typeof window === 'undefined') return
+  const name = window.location.hash.replace(/^#\/?/, '').split('?')[0]
+  if (name !== 'library') return
+  window.history.replaceState(
+    null,
+    '',
+    `${window.location.pathname}${window.location.search}#/editor`,
+  )
 }
 
 export function navigate(route: Route) {
-  window.location.hash = `#/${route}`
-}
-
-export function useRoute(): Route {
-  const [route, setRoute] = useState(() => parseHash(currentHash()))
-  useEffect(() => {
-    const onChange = () => setRoute(parseHash(currentHash()))
-    window.addEventListener('hashchange', onChange)
-    return () => window.removeEventListener('hashchange', onChange)
-  }, [])
-  return route
+  if (window.location.hash !== `#/${route}`) window.location.hash = `#/${route}`
 }
