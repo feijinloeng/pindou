@@ -5,4 +5,3 @@
 
 /** 1pt = 1/72 inch，1 inch = 25.4mm。用精确值，不用四舍五入过的常量。 */
 export const PT_PER_MM = 72 / 25.4
-export const MM_PER_PT = 25.4 / 72

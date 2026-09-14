@@ -11,7 +11,7 @@ import {
 import { mergeSmallComponents, majorityFilter } from './cleanup'
 import type { PaletteLabEntry, Rgb } from './colorDistance'
 import { cropRect, downscale, downscaleContained, fitToAspect, type FitMode } from './downscale'
-import { limitColors, nearestRemap } from './limitColors'
+import { limitColors } from './limitColors'
 import { createMatcher, matchWithDither } from './match'
 import { bilateralFilter, luminanceOf, neutralBias } from './preprocess'
 import { resolveDither, resolveStrategy, type StrategyChoice, type StrategyId } from './strategies'
@@ -40,7 +40,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   fit: 'contain',
 }
 
-export interface ConvertInput {
+interface ConvertInput {
   image: SourceImage
   /** 色板 RGB（顺序 = 色板索引） */
   paletteColors: Rgb[]
@@ -74,17 +74,6 @@ export interface ConvertResult {
   /** 主体外接框是否生效 */
   cropped: boolean
 }
-
-export const STAGE_LABELS = [
-  '分析内容',
-  '裁到主体',
-  '降采样',
-  '预处理',
-  '色差匹配',
-  '限制色数',
-  '去杂',
-  '去背景',
-] as const
 
 /**
  * 转换主链路：解码后的图像 → CellGrid。
@@ -160,8 +149,6 @@ export function convert(input: ConvertInput): ConvertResult {
       }
     }
   }
-  void remap
-
   report('去杂', 0.82)
   const luminance = new Float32Array(paletteColors.length)
   for (let i = 0; i < paletteColors.length; i++) luminance[i] = luminanceOf(paletteColors[i])
@@ -231,13 +218,3 @@ function keyColorIndexes(paletteColors: Rgb[], luminance: Float32Array): number[
   }
   return dark === light ? [dark] : [dark, light]
 }
-
-/** 用真正的最近色把被删的色并回去（限色后重映射的那一步） */
-export function remapCells(cells: Uint16Array, map: Map<number, number>): void {
-  for (let i = 0; i < cells.length; i++) {
-    const mapped = map.get(cells[i])
-    if (mapped !== undefined) cells[i] = mapped
-  }
-}
-
-export { nearestRemap }

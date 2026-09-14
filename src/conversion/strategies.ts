@@ -7,7 +7,7 @@ export type StrategyId = 'general' | 'cartoon' | 'portrait' | 'pixelart' | 'line
 export type StrategyChoice = 'auto' | StrategyId
 
 /** 内容分析 → 策略。分析结果现在真的驱动参数，不再只是一个显示用的结论 */
-export const KIND_TO_STRATEGY: Record<'lineart' | 'pixelart' | 'document' | 'photo', StrategyId> =
+const KIND_TO_STRATEGY: Record<'lineart' | 'pixelart' | 'document' | 'photo', StrategyId> =
   {
     lineart: 'lineart',
     pixelart: 'pixelart',
@@ -25,7 +25,7 @@ export function resolveStrategy(
   return STRATEGIES[kind ? KIND_TO_STRATEGY[kind] : 'general']
 }
 
-export interface ConversionStrategy {
+interface ConversionStrategy {
   id: StrategyId
   label: string
   description: string
@@ -122,19 +122,4 @@ export const STRATEGIES: Record<StrategyId, ConversionStrategy> = {
 export function resolveDither(strategyId: StrategyChoice, dither: number | null): number {
   if (dither !== null && dither !== undefined) return dither
   return resolveStrategy(strategyId).dither
-}
-
-export const STRATEGY_LIST: ConversionStrategy[] = [
-  STRATEGIES.general,
-  STRATEGIES.cartoon,
-  STRATEGIES.portrait,
-  STRATEGIES.pixelart,
-  STRATEGIES.lineart,
-]
-
-/** 界面下拉里的“自动”项（不属于 STRATEGIES：它自己没有参数） */
-export const AUTO_OPTION = {
-  id: 'auto' as const,
-  label: '自动',
-  description: '按图片内容自动挑档位',
 }

@@ -10,6 +10,8 @@ import {
   describeLayoutError,
   placementsFromArray,
   placementsSizeMm,
+  describeBoardArrayError,
+  validateBoardArray,
   validateLayout,
   type BoardArray,
   type BoardGeometry,
@@ -341,12 +343,24 @@ export function validateProject(raw: unknown, paletteSize?: number): ParseResult
     }
   }
 
-  // 板阵：新格式是 layout（自由摆放），老格式是 boardArray（固定矩阵）
-  const layout: BoardLayout = stored.layout
-    ? (stored.layout as BoardLayout)
-    : stored.boardArray
-      ? { placements: placementsFromArray(stored.boardArray as BoardArray), gapMm: (stored.boardArray as BoardArray).gapMm }
-      : { placements: [], gapMm: 0 }
+  // 板阵：新格式是 layout（自由摆放），老格式是 boardArray（固定矩阵）。
+  // 旧数据先走完整校验，避免 placementsFromArray 对坏板型直接抛 TypeError。
+  let layout: BoardLayout
+  if (stored.layout) {
+    layout = stored.layout as BoardLayout
+  } else if (stored.boardArray) {
+    const boardArray = stored.boardArray as BoardArray
+    const invalidArray = validateBoardArray(boardArray)
+    if (invalidArray) {
+      return {
+        project: null,
+        error: { kind: 'fatal', message: `板阵非法：${describeBoardArrayError(invalidArray)}` },
+      }
+    }
+    layout = { placements: placementsFromArray(boardArray), gapMm: boardArray.gapMm }
+  } else {
+    layout = { placements: [], gapMm: 0 }
+  }
   const invalidLayout = validateLayout(layout)
   if (invalidLayout) {
     return {

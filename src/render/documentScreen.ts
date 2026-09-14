@@ -1,8 +1,8 @@
 import { boardGuide, type BoardGeometry } from '../domain/board'
 import { EMPTY, isPlaceable, type CellGrid } from '../domain/grid'
 import { PT_PER_MM } from '../domain/geometry'
-import { hexToRgb, type Palette, labelTextColor } from '../domain/palette'
-import { bomPageCount, bomRowsPerPage, buildBom, drawBom, paletteDisplayLabel, totalBeads } from './bom'
+import { hexToRgb, labelTextColor, paletteDisplayLabel, type Palette } from '../domain/palette'
+import { bomPageCount, bomRowsPerPage, buildBom, drawBom, totalBeads } from './bom'
 import { planAnnotations, screenLayout, SCREEN_PAD_PT, type AnnotationPlan } from './documentLayout'
 import { BOARD_BG } from './colors'
 import { gray255, type PdfSink } from './pdf'
@@ -30,7 +30,7 @@ export interface ScreenPdfOptions {
   showTitle?: boolean
 }
 
-export interface ScreenPdfResult {
+interface ScreenPdfResult {
   plan: AnnotationPlan
   pageCount: number
   widthPt: number
@@ -490,7 +490,7 @@ export function drawAnnotations(
  *  4. 字号用当次实际的，不能统一常量
  *  5. 文字色按底色亮度算，不能硬编码黑色
  */
-export function layoutCellText(
+function layoutCellText(
   code: string,
   centerX: number,
   centerY: number,
@@ -504,22 +504,4 @@ export function layoutCellText(
     width,
     capHeight,
   }
-}
-
-/** 单条文字（大标签之类）的即时绘制版本 */
-export function drawCellText(
-  sink: PdfSink,
-  code: string,
-  centerX: number,
-  centerY: number,
-  fontSizePt: number,
-  cellHex: string,
-  _mode: 'cell' | 'black',
-): void {
-  const laid = layoutCellText(code, centerX, centerY, fontSizePt)
-  const light = labelTextColor(cellHex) === 'black'
-  const fill: [number, number, number] = light ? [0, 0, 0] : [255, 255, 255]
-  sink.textColor(fill)
-  // The code itself is the only label mark: no outline or halo around it.
-  sink.text(code, laid.x, laid.y, fontSizePt, 'fill')
 }

@@ -2,7 +2,6 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useRef,
   useState,
   type ReactNode,
@@ -117,48 +116,6 @@ export function Tip({
   )
 }
 
-/* ---------- 图标按钮：34×34，tip 文本同时是可访问名 ---------- */
-
-export function IconBtn({
-  icon,
-  label,
-  onClick,
-  active,
-  disabled,
-  size = 34,
-}: {
-  icon: ReactNode
-  label: string
-  onClick?: () => void
-  active?: boolean
-  disabled?: boolean
-  size?: number
-}) {
-  const { ref: inner, handlers } = usePressFeedback()
-  return (
-    <Tip label={label}>
-      <button
-        type="button"
-        aria-label={label}
-        aria-pressed={active === undefined ? undefined : active}
-        disabled={disabled}
-        onClick={onClick}
-        {...handlers}
-        style={{ width: size, height: size }}
-        className={`inline-flex shrink-0 items-center justify-center rounded-lg border text-ink select-none disabled:cursor-not-allowed disabled:opacity-40 ${
-          active
-            ? 'border-accent bg-accent text-on-accent'
-            : 'border-transparent bg-transparent hover:bg-hover'
-        }`}
-      >
-        <span ref={inner} className="inline-flex">
-          {icon}
-        </span>
-      </button>
-    </Tip>
-  )
-}
-
 /* ---------- 表单字段：标签在输入框上面 ---------- */
 
 export function Field({
@@ -181,72 +138,6 @@ export function Field({
 
 export const INPUT_CLS =
   'rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink placeholder:text-ink-2/60'
-
-/* ---------- 键值行 ---------- */
-
-export function Label({ children, value }: { children: ReactNode; value?: ReactNode }) {
-  return (
-    <div className="flex items-baseline justify-between gap-2 text-sm text-ink-2">
-      <span>{children}</span>
-      {value !== undefined && <span className="tabular text-ink">{value}</span>}
-    </div>
-  )
-}
-
-/* ---------- 披露（更多调整这类）：aria-expanded/controls 齐全 ---------- */
-
-export function Disclosure({
-  summary,
-  children,
-  open,
-  onToggle,
-}: {
-  summary: ReactNode
-  children: ReactNode
-  open?: boolean
-  onToggle?: (open: boolean) => void
-}) {
-  const id = useId()
-  const [innerOpen, setInnerOpen] = useState(false)
-  const controlled = open !== undefined
-  const shown = controlled ? open : innerOpen
-  const bodyRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const el = bodyRef.current
-    if (!shown || !el || reducedMotion()) return
-    gsap.fromTo(
-      el,
-      { opacity: 0, y: 4 },
-      { opacity: 1, y: 0, duration: MOTION.pop, ease: MOTION.easeOut, clearProps: 'transform' },
-    )
-  }, [shown])
-
-  return (
-    <div>
-      <button
-        type="button"
-        aria-expanded={shown}
-        aria-controls={id}
-        onClick={() => (controlled ? onToggle?.(!shown) : setInnerOpen(!shown))}
-        className="flex items-center gap-1 text-xs font-medium text-ink-2 hover:text-ink"
-      >
-        <span
-          aria-hidden
-          className={`inline-block transition-transform ${shown ? 'rotate-90' : ''}`}
-        >
-          ▸
-        </span>
-        {summary}
-      </button>
-      {shown && (
-        <div id={id} ref={bodyRef} className="mt-2">
-          {children}
-        </div>
-      )}
-    </div>
-  )
-}
 
 /* ---------- 浮层共用：打开/关闭动画 + 外交互关闭 + Escape 入栈 + 焦点归还 ---------- */
 
@@ -395,71 +286,6 @@ export function MenuItem({
     >
       {children}
     </button>
-  )
-}
-
-/* ---------- 气泡：非模态 dialog，放表单。菜单放动作，气泡放内容 ---------- */
-
-export function Popover({
-  label,
-  title,
-  children,
-  align = 'left',
-  width = 'w-72',
-  trigger,
-}: {
-  label?: ReactNode
-  title: string
-  children: ReactNode | ((close: () => void) => ReactNode)
-  align?: 'left' | 'right'
-  width?: string
-  /** 完全自定义触发器（默认是一个 secondary 按钮） */
-  trigger?: (open: boolean, toggle: () => void) => ReactNode
-}) {
-  const [open, setOpen] = useState(false)
-  const close = () => setOpen(false)
-  const { triggerRef, boxRef } = useFloating(open, close)
-  const { ref, shown, exiting } = usePresence(open, {
-    from: { opacity: 0, scale: 0.98, y: -4 },
-    to: { opacity: 1, scale: 1, y: 0 },
-    exit: { opacity: 0, scale: 0.98, y: -4 },
-    enterDuration: MOTION.pop,
-    exitDuration: 0.1,
-  })
-
-  return (
-    <span className="relative inline-flex">
-      {trigger ? (
-        trigger(open, () => setOpen(!open))
-      ) : (
-        <button
-          ref={triggerRef}
-          type="button"
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          onClick={() => setOpen(!open)}
-          className={`${BTN_BASE} ${open ? 'border-accent bg-accent text-on-accent' : BTN_VARIANTS.secondary}`}
-        >
-          {label}
-        </button>
-      )}
-      {shown && (
-        <div
-          ref={(el) => {
-            boxRef.current = el
-            ref.current = el
-          }}
-          role="dialog"
-          aria-label={title}
-          style={{ zIndex: Z.menu }}
-          className={`absolute top-full mt-1 rounded-xl border border-line bg-surface p-3 shadow-lg ${width} ${
-            align === 'right' ? 'right-0' : 'left-0'
-          } ${exiting ? 'pointer-events-none' : ''}`}
-        >
-          {typeof children === 'function' ? children(close) : children}
-        </div>
-      )}
-    </span>
   )
 }
 

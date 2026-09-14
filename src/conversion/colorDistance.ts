@@ -18,7 +18,7 @@ export function linearToSrgb(value: number): number {
   return Math.min(255, Math.max(0, Math.round(c * 255)))
 }
 
-export function rgbToLinear(rgb: Rgb): [number, number, number] {
+function rgbToLinear(rgb: Rgb): [number, number, number] {
   return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])]
 }
 
@@ -33,7 +33,7 @@ const DELTA3 = (6 / 29) ** 3
 const K = 24389 / 27
 
 /** linear sRGB → XYZ（D65） */
-export function linearToXyz(linear: readonly [number, number, number]): [number, number, number] {
+function linearToXyz(linear: readonly [number, number, number]): [number, number, number] {
   const [r, g, b] = linear
   return [
     0.4124564 * r + 0.3575761 * g + 0.1804375 * b,
@@ -46,7 +46,7 @@ function labF(t: number): number {
   return t > DELTA3 ? Math.cbrt(t) : (K * t + 16) / 116
 }
 
-export function xyzToLab(xyz: readonly [number, number, number]): Lab {
+function xyzToLab(xyz: readonly [number, number, number]): Lab {
   const fx = labF(xyz[0] / XN)
   const fy = labF(xyz[1] / YN)
   const fz = labF(xyz[2] / ZN)
@@ -59,7 +59,7 @@ export function rgbToLab(rgb: Rgb): Lab {
 }
 
 /** linear sRGB → Oklab（Björn Ottosson）。只用来粗筛，不参与最终判定。 */
-export function linearToOklab(linear: readonly [number, number, number]): Lab {
+function linearToOklab(linear: readonly [number, number, number]): Lab {
   const [r, g, b] = linear
   const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
   const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
@@ -171,8 +171,4 @@ export interface PaletteLabEntry {
   rgb: Rgb
   lab: Lab
   oklab: Lab
-}
-
-export function toLabEntry(rgb: Rgb): PaletteLabEntry {
-  return { rgb, lab: rgbToLab(rgb), oklab: rgbToOklab(rgb) }
 }

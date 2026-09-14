@@ -1,8 +1,8 @@
 import type { BoardGeometry } from '../domain/board'
-import { EMPTY, type CellGrid } from '../domain/grid'
+import { type CellGrid } from '../domain/grid'
 import { PT_PER_MM } from '../domain/geometry'
-import type { Palette } from '../domain/palette'
-import { bomPageCount, bomRowsPerPage, buildBom, drawBom, paletteDisplayLabel, totalBeads } from './bom'
+import { paletteDisplayLabel, type Palette } from '../domain/palette'
+import { bomPageCount, bomRowsPerPage, buildBom, drawBom, totalBeads } from './bom'
 import {
   getPaperScope,
   OVERLAP_CELLS,
@@ -15,8 +15,6 @@ import {
   type SheetRange,
 } from './documentLayout'
 import {
-  BOARD_GUIDE,
-  BOARD_GUIDE_DASH,
   SHEET_SEAM,
   drawAnnotations,
   drawCells,
@@ -33,8 +31,6 @@ import { type PdfSink } from './pdf'
  * A4 = 210 × 297mm，不可打印边距 5mm；按整张板阵选择更省页的方向，
  * 每页尽量放满图案，并用 2–3 格重叠带帮助裁切和拼接。
  */
-/** 旧调用保留的竖版 A4 尺寸常量；实际纸面导出会按布局自动选择横向或纵向。 */
-export const A4_PT = { w: 210 * PT_PER_MM, h: 297 * PT_PER_MM }
 /** 100mm 主标尺的长度（pt） */
 export const RULER_MM = 100
 export const RULER_PT = RULER_MM * PT_PER_MM
@@ -570,5 +566,3 @@ export function drawInstructions(sink: PdfSink, options: PaperInstructionOptions
   }
   sink.setFont('latin')
 }
-
-export { EMPTY, BOARD_GUIDE, BOARD_GUIDE_DASH, SHEET_SEAM }

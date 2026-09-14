@@ -1,6 +1,6 @@
 import { ciede2000, type PaletteLabEntry } from './colorDistance'
 
-export interface LimitResult {
+interface LimitResult {
   /** 保留的色板索引，按用量降序 */
   keep: number[]
   /** 任意索引 → 保留的最近索引 */
@@ -9,7 +9,7 @@ export interface LimitResult {
   dropped: number[]
 }
 
-export interface LimitOptions {
+interface LimitOptions {
   /** 目标色数的硬上限（1 起）；<= 0 表示不限制 */
   maxColors: number
   /**
@@ -101,7 +101,7 @@ export function limitColors(
 }
 
 /** 中间调灰：饱和度低、亮度不上不下的那种"灰泥" */
-export function isGrayMud(entry: PaletteLabEntry): boolean {
+function isGrayMud(entry: PaletteLabEntry): boolean {
   const [l, a, b] = entry.lab
   const sat = Math.hypot(a, b)
   return sat < 30 && l > 50 && l < 220

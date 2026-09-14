@@ -18,19 +18,15 @@ export function makeRect(c0: number, r0: number, c1: number, r1: number): Rect {
   }
 }
 
-export function rectWidth(r: Rect): number {
+function rectWidth(r: Rect): number {
   return r.c1 - r.c0 + 1
 }
 
-export function rectHeight(r: Rect): number {
+function rectHeight(r: Rect): number {
   return r.r1 - r.r0 + 1
 }
 
-export function rectArea(r: Rect): number {
-  return rectWidth(r) * rectHeight(r)
-}
-
-export function clampRectTo(grid: CellGrid, rect: Rect): Rect | null {
+function clampRectTo(grid: CellGrid, rect: Rect): Rect | null {
   const c0 = Math.max(0, rect.c0)
   const r0 = Math.max(0, rect.r0)
   const c1 = Math.min(grid.cols - 1, rect.c1)
@@ -44,10 +40,6 @@ export function selectionContains(sel: Selection, col: number, row: number): boo
   return sel.some((r) => col >= r.c0 && col <= r.c1 && row >= r.r0 && row <= r.r1)
 }
 
-export function selectionArea(sel: Selection): number {
-  return sel.reduce((n, r) => n + rectArea(r), 0)
-}
-
 export function selectionBBox(sel: Selection): Rect | null {
   if (sel.length === 0) return null
   return sel.reduce((acc, r) => ({
@@ -59,7 +51,7 @@ export function selectionBBox(sel: Selection): Rect | null {
 }
 
 /** 遍历选中的格子（跳过选区外的） */
-export function forEachSelected(
+function forEachSelected(
   sel: Selection,
   fn: (col: number, row: number) => void,
 ): void {
@@ -81,14 +73,6 @@ export function fillSelection(
     if (inBounds(grid, col, row) && sink.set(col, row, value)) n++
   })
   return n
-}
-
-export function clearSelection(
-  sink: WriteSink,
-  grid: CellGrid,
-  sel: Selection,
-): number {
-  return fillSelection(sink, grid, sel, EMPTY)
 }
 
 /**

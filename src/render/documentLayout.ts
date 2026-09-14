@@ -758,5 +758,3 @@ function growI32(array: Int32Array<ArrayBuffer>, used: number): Int32Array<Array
   next.set(array.subarray(0, used))
   return next
 }
-
-export { EMPTY }

@@ -19,13 +19,8 @@ import {
   zoomFromWheel,
   type Viewport,
 } from '../render/canvasViewport'
-import {
-  BOARD_BG,
-  BOARD_GUIDE_COLOR,
-  drawCursorBox,
-  drawPattern,
-  fillCellRect,
-} from '../render/drawPattern'
+import { BOARD_BG, BOARD_GUIDE_COLOR } from '../render/colors'
+import { drawCursorBox, drawPattern, fillCellRect } from '../render/drawPattern'
 import { GridBitmap } from '../render/gridBitmap'
 import ToolDock from './ToolRail'
 

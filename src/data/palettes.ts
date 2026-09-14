@@ -7,7 +7,7 @@ import type { Rgb } from '../conversion/colorDistance'
  * 构建产物（`scripts/data/build-palettes.ts` 生成）的读取与索引。
  * 运行时不发任何网络请求 —— 离线可用（第 1 节决策 22）。
  */
-export interface PaletteFile {
+interface PaletteFile {
   schema: string
   schemaVersion: number
   note: string
@@ -17,7 +17,7 @@ export interface PaletteFile {
   palettes: Palette[]
 }
 
-export const PALETTE_FILE = raw as unknown as PaletteFile
+const PALETTE_FILE = raw as unknown as PaletteFile
 const PALETTE_PRIORITY = ['mard-221', 'mard-291']
 export const PALETTES: Palette[] = PALETTE_FILE.palettes
   .map((palette, index) => ({ palette, index }))
@@ -36,9 +36,6 @@ export const PALETTES: Palette[] = PALETTE_FILE.palettes
     return b.palette.colors.length - a.palette.colors.length || a.index - b.index
   })
   .map(({ palette }) => palette)
-export const DISCLAIMER = PALETTE_FILE.disclaimer
-export const TRADEMARKS = PALETTE_FILE.trademarks
-export const ATTRIBUTION = PALETTE_FILE.attribution
 
 export const DEFAULT_PALETTE_ID = 'mard-221'
 

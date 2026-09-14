@@ -1,7 +1,6 @@
 import { jsPDF } from 'jspdf'
 
 import type { Rgb } from '../conversion/colorDistance.ts'
-import { PT_PER_MM } from '../domain/geometry.ts'
 import { PINDOU_BOM_CJK_FONT_BASE64 } from './fonts/pindouBomCjk.ts'
 
 const CJK_FONT_FILE = 'PindouBOMCJK-Regular.ttf'
@@ -48,7 +47,7 @@ export interface PdfSink {
   output(): Uint8Array
 }
 
-export interface JsPdfOptions {
+interface JsPdfOptions {
   widthPt: number
   heightPt: number
 }
@@ -59,12 +58,12 @@ export interface JsPdfOptions {
  * 4 位小数改成 3 位是量过的：1.3M 个矩形的坐标从 "2974.4252" 变成 "2974.425"，
  * Flate 压缩率明显变好。3 位小数 = 0.001pt ≈ 0.00035mm，比打印精度高三个数量级。
  */
-export function fmt(value: number): string {
+function fmt(value: number): string {
   if (Number.isInteger(value)) return String(value)
   return value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
 }
 
-export function rgb01(rgb: Rgb): [number, number, number] {
+function rgb01(rgb: Rgb): [number, number, number] {
   return [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255]
 }
 
@@ -72,7 +71,7 @@ export function rgb01(rgb: Rgb): [number, number, number] {
  * PDF 里的颜色串（0-1，四位小数）。
  * ⚠️ PdfSink 全线收 0-255 的 Rgb，别自己先除一遍 —— 除两次会让红色变成 0.0032。
  */
-export function pdfRgb(rgb: Rgb): string {
+function pdfRgb(rgb: Rgb): string {
   return rgb01(rgb).map(fmt).join(' ')
 }
 
@@ -229,5 +228,3 @@ class JsPdfSink implements PdfSink {
 export function createPdfSink(options: JsPdfOptions): PdfSink {
   return new JsPdfSink(options)
 }
-
-export { PT_PER_MM }

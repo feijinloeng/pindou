@@ -11,7 +11,7 @@ import type { Viewport } from './canvasViewport'
 export const BITMAP_THRESHOLD = 40_000
 
 /** 纯函数：把整张图打包成 RGBA 缓冲，供 ImageData 使用 */
-export function packGridRgba(grid: CellGrid, palette: Palette, out: Uint8ClampedArray): void {
+function packGridRgba(grid: CellGrid, palette: Palette, out: Uint8ClampedArray): void {
   const rgba = new Uint8Array(palette.colors.length * 4)
   for (let i = 0; i < palette.colors.length; i++) {
     const [r, g, b] = hexToRgb(palette.colors[i].hex)

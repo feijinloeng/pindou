@@ -1,33 +1,6 @@
 export type PitchMm = 2.6 | 5
 export type BoardTypeId = 'mini26' | 'mini52' | 'mini78' | 'mini104' | 'midi29'
 
-function fill(r: number, c: number, type: BoardTypeId): BoardArray {
-  return {
-    rows: Array.from({ length: r }, () => Array.from({ length: c }, () => type)),
-    gapMm: 0,
-  }
-}
-
-/** 常用板阵。编辑器开箱就用这些，省得先填矩阵 */
-export const BOARD_PRESETS: Array<{ id: string; label: string; array: BoardArray }> = [
-  { id: '52-1', label: '1 块 52（52×52）', array: fill(1, 1, 'mini52') },
-  { id: '52-3x3', label: '3×3 个 52（156×156）', array: fill(3, 3, 'mini52') },
-  { id: '52-1x6', label: '1×6 个 52 带鱼屏（312×52）', array: fill(1, 6, 'mini52') },
-  { id: '104-2', label: '104 两块并排（208×104）', array: fill(1, 2, 'mini104') },
-  { id: '104-2x2', label: '2×2 个 104（208×208）', array: fill(2, 2, 'mini104') },
-  {
-    id: 'mixed-band',
-    label: '混搭：一条 104 带 + 一条 52 带（208×156）',
-    array: {
-      rows: [
-        ['mini104', 'mini104'],
-        ['mini52', 'mini52', 'mini52', 'mini52'],
-      ],
-      gapMm: 0,
-    },
-  },
-]
-
 export interface BoardProfile {
   id: BoardTypeId
   /** 钉数（正方形板） */
@@ -175,7 +148,7 @@ export interface BoardLayout {
 }
 
 /** 两块板的豆格矩形是否有真正的面积交集。共边不算重叠。 */
-export function boardPlacementsOverlap(
+function boardPlacementsOverlap(
   first: BoardPlacement,
   second: BoardPlacement,
 ): boolean {
@@ -388,7 +361,7 @@ export type BoardArrayError =
  * 尺寸检查：必须是正整数，再谈上限。
  * 只查上限的话，0 / 负数 / 小数 / NaN 都能混进几何算法，最后在别处炸。
  */
-export function checkCanvasCells(cols: number, rows: number): SizeError | null {
+function checkCanvasCells(cols: number, rows: number): SizeError | null {
   if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) {
     return { kind: 'bad-size', cols, rows }
   }
@@ -470,14 +443,6 @@ export function describeBoardArrayError(err: BoardArrayError): string {
   }
 }
 
-
-/** 推导豆格尺寸、板缝位置、每块板的豆格矩形。板阵非法时抛错。 */
-export function deriveGeometry(array: BoardArray): BoardGeometry {
-  const err = validateBoardArray(array)
-  if (err) throw new Error(describeBoardArrayError(err))
-  return deriveLayoutGeometry({ placements: placementsFromArray(array), gapMm: array.gapMm })
-}
-
 interface BoardSpan {
   start: number
   size: number
@@ -489,14 +454,16 @@ interface BoardSpan {
  * 否则 1:1 打印会比实物短一个缝宽 × 板数。
  */
 function axisMm(spans: BoardSpan[], pitch: number, gap: number): number {
-  const cuts = new Set<number>()
+  const starts = new Set<number>()
+  const ends = new Set<number>()
   for (const span of spans) {
-    if (span.start > 0) cuts.add(span.start)
-    cuts.add(span.start + span.size)
+    if (span.start > 0) starts.add(span.start)
+    ends.add(span.start + span.size)
   }
-  const sorted = [...cuts].sort((a, b) => a - b)
-  const end = sorted[sorted.length - 1] ?? 0
-  return end * pitch + Math.max(0, sorted.length - 1) * gap
+  const end = Math.max(0, ...ends)
+  // 只有一块板的结束边同时是另一块板的起始边时才算板缝，外框和空格不算。
+  const seams = [...starts].filter((start) => ends.has(start)).length
+  return end * pitch + seams * gap
 }
 
 /** 摆放列表的物理尺寸。作品库卡片用，不值得为一行摘要去分配 5M 的遮罩 */

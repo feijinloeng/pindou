@@ -3,7 +3,7 @@ import type { SourceImage } from './types'
 
 export type DownscaleMode = 'mean' | 'dominant'
 
-export interface DownscaleResult {
+interface DownscaleResult {
   width: number
   height: number
   /** RGB，长度 = width × height × 3 */
@@ -14,7 +14,7 @@ export interface DownscaleResult {
  * 线性 RGB 均值降采样。
  * ⚠️ 必须在 linear 空间做：直接在 sRGB 上平均会让整体变暗（本领域最常见的隐形 bug）。
  */
-export function downscaleAverage(
+function downscaleAverage(
   src: SourceImage,
   outW: number,
   outH: number,
@@ -55,7 +55,7 @@ export function downscaleAverage(
  * 主导色降采样：6bit 量化计数，取最高频桶，返回值用该桶内真实像素的均值。
  * 纯黑白棋盘格不会出现中间灰 —— 这正是它和均值档的区别。
  */
-export function downscaleDominant(
+function downscaleDominant(
   src: SourceImage,
   outW: number,
   outH: number,

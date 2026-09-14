@@ -3,7 +3,6 @@ import {
   oklabDistanceSq,
   rgbToLab,
   rgbToOklab,
-  type Lab,
   type PaletteLabEntry,
   type Rgb,
 } from './colorDistance'
@@ -18,9 +17,9 @@ import {
  * ponytail: 仍是近似。真要全量精算得先把 ciede2000 的三角函数预算出来，
  * 否则 291 色全扫会让大图转换慢到分钟级。先用 PRE_FILTER=24 顶着。
  */
-export const PRE_FILTER = 24
+const PRE_FILTER = 24
 
-export interface PaletteMatcher {
+interface PaletteMatcher {
   /** 返回色板里的索引 */
   match(rgb: Rgb): number
   /** 该色板颜色的 Lab（外面统计要用） */
@@ -183,5 +182,3 @@ export function matchWithDither(
 function clampByte(v: number): number {
   return v < 0 ? 0 : v > 255 ? 255 : v
 }
-
-export type { Lab }

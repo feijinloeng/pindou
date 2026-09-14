@@ -5,15 +5,6 @@ import { CODE_ZOOM, GRID_ZOOM, type Viewport, visibleRange } from './canvasViewp
 import { BITMAP_THRESHOLD, type GridBitmap } from './gridBitmap'
 import type { Selection } from '../editor/selection'
 
-export {
-  BOARD_BG,
-  BOARD_GUIDE_COLOR,
-  CURSOR_COLOR,
-  HOLE_BG,
-  SEAM_COLOR,
-  SELECTION_COLOR,
-  STAGE_BG,
-} from './colors'
 import { BOARD_BG, BOARD_GUIDE_COLOR, CURSOR_COLOR, SELECTION_COLOR, STAGE_BG } from './colors'
 
 export interface DrawPatternOptions {

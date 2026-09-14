@@ -1,6 +1,4 @@
 import { useEditor } from '../editor/store'
-import type { Project } from '../domain/project'
-
 /**
  * 自动保存：编辑操作 debounce 2 秒写一次，重命名立刻写。
  * 没有 indexedDB 的环境（测试、SSR）直接跳过。
@@ -35,8 +33,4 @@ export function startAutosave(debounceMs = 2000): () => void {
     document.removeEventListener('visibilitychange', onHidden)
     if (timer) clearTimeout(timer)
   }
-}
-
-export function projectFromStore(): Project {
-  return useEditor.getState().toProject()
 }

@@ -85,7 +85,7 @@ export default function Library({
     try {
       // 优先打开草稿（可能比正式保存的更新）
       const entry = entries.find((e) => e.project.id === id)
-      const draft = await getDraft(id)
+      const draft = entry?.hasNewerDraft ? await getDraft(id) : undefined
       const target = draft ?? entry?.project
       if (!target) return
       // 草稿比正式工程新 = 这份内容还没经过一次正式保存，导出前要先保存
@@ -368,6 +368,11 @@ export default function Library({
 
       {!embedded && <NewProjectDialog open={newOpen} onClose={() => setNewOpen(false)} />}
       <ProjectDetails project={details} onClose={() => setDetails(null)} />
+      <footer className="mt-auto pt-2 text-center text-xs text-ink-2">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">
+          {t('icp')}
+        </a>
+      </footer>
     </div>
   )
 }

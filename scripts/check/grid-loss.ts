@@ -9,6 +9,7 @@ import {
   boardGuide,
   boardPlacementOverlapsOthers,
   deriveLayoutGeometry,
+  placementsSizeMm,
   validateLayout,
 } from '../../src/domain/board.ts'
 import { EMPTY, lostCells } from '../../src/domain/grid.ts'
@@ -108,19 +109,30 @@ function fill(g: ReturnType<typeof grid>, index: number, value = 0) {
   )
 }
 
-// 9. Export bundle primary files keep a readable numeric order and distinguish preview/vector/print output.
+// 9. Physical summaries count only internal board seams, never the outer frame.
+{
+  const one = placementsSizeMm([{ board: 'mini52', col: 0, row: 0 }])
+  assert.equal(`${one.w.toFixed(1)}×${one.h.toFixed(1)}`, '135.2×135.2')
+  const pair = placementsSizeMm([
+    { board: 'mini52', col: 0, row: 0 },
+    { board: 'mini52', col: 52, row: 0 },
+  ], 1)
+  assert.equal(`${pair.w.toFixed(1)}×${pair.h.toFixed(1)}`, '271.4×135.2')
+}
+
+// 10. Export bundle primary files keep a readable numeric order and distinguish preview/vector/print output.
 assert.equal(exportFilename(1, '春日作品', '预览图', 'png'), '1.春日作品（预览图）.png')
 assert.equal(exportFilename(2, '春日作品', '矢量版', 'pdf'), '2.春日作品（矢量版）.pdf')
 assert.equal(exportFilename(3, '春日作品', '打印版', 'pdf'), '3.春日作品（打印版）.pdf')
 
-// 10. Vector usage-list labels use Chinese while codes and palette identifiers stay intact.
+// 11. Vector usage-list labels use Chinese while codes and palette identifiers stay intact.
 const mardLabel = paletteDisplayLabel({
   brand: 'MARD',
   displayName: 'MARD 221（221/221 有色值）',
 })
 assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
 
-// 11. Paper output uses one continuous scope for a multi-board layout, then chooses the
+// 12. Paper output uses one continuous scope for a multi-board layout, then chooses the
 // orientation that needs fewer A4 sheets instead of starting a new PDF per board.
 {
   const wide = grid(104, 52)
@@ -138,7 +150,7 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
   assert.equal(layout.sheets[0].rows, 52)
 }
 
-// 12. Adjacent sheets share the configured overlap band.
+// 13. Adjacent sheets share the configured overlap band.
 {
   const large = grid(150, 150)
   const layout = paperLayout(large, 2.6, { overlap: 3 })
@@ -147,7 +159,7 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
   assert.equal(layout.sheets[3].row0, layout.sheets[0].row0 + layout.sheets[0].rows - 3)
 }
 
-// 13. A uniform region gets a large center label plus an outer boundary ring.
+// 14. A uniform region gets a large center label plus an outer boundary ring.
 {
   const uniform = grid(12, 12)
   uniform.cells.fill(0)
@@ -160,7 +172,7 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
   assert.equal(plan.cellMarks.reduce((total, marked) => total + marked, 0), 44)
 }
 
-// 14. Two very sparse neighboring logical sheets are cropped and packed on one A4 without scaling.
+// 15. Two very sparse neighboring logical sheets are cropped and packed on one A4 without scaling.
 {
   const sparse = grid(150, 150)
   for (let row = 0; row < 3; row++) {
@@ -182,7 +194,7 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
   assert.equal(first.range.cols * 2.6, 18.2)
 }
 
-// 15. Even a thin logical edge page with no colored beads is printable content (grid/red guides),
+// 16. Even a thin logical edge page with no colored beads is printable content (grid/red guides),
 // so the two final strips must still be packed instead of remaining as two mostly blank A4 pages.
 {
   const blank = paperLayout(grid(150, 150), 2.6, { overlap: 3 })
@@ -198,4 +210,4 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
   assert.ok(Math.abs(lastPage.fragments[0].yPt - lastPage.fragments[1].yPt) >= 10 * PT_PER_MM)
 }
 
-console.log('lostCells / boardGuide / free layout / drag collision / export names / BOM palette label / A4 paper layout 自检通过（36 条）')
+console.log('网格 / 布局 / 迁移 / 导出自检通过')

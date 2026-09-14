@@ -41,23 +41,6 @@ export function inBounds(g: CellGrid, col: number, row: number): boolean {
   return !g.placeable || g.placeable[row * g.cols + col] === 1
 }
 
-export function getCell(g: CellGrid, col: number, row: number): number {
-  return inBounds(g, col, row) ? g.cells[row * g.cols + col] : EMPTY
-}
-
-export function clearGrid(g: CellGrid, fill = EMPTY): void {
-  g.cells.fill(fill)
-}
-
-export function cloneGrid(g: CellGrid): CellGrid {
-  return {
-    cols: g.cols,
-    rows: g.rows,
-    cells: g.cells.slice(),
-    placeable: g.placeable?.slice(),
-  }
-}
-
 /**
  * 这个格子底下有没有板。索引版（所有逐格循环都走它，空档就不会被统计/绘制）
  */
@@ -74,10 +57,7 @@ export function usedCells(g: CellGrid): number {
   return n
 }
 
-/**
- * 换成下一个板阵会丢掉的非空格子数。
- * 换板阵前先把代价算出来，别让用户点完才发现内容少了。
- */
+/** 换板阵前计算会被新布局淘汰的非空格子数。 */
 export function lostCells(
   g: CellGrid,
   next: { cols: number; rows: number; placeable: Uint8Array },
@@ -88,9 +68,7 @@ export function lostCells(
     if (g.placeable && g.placeable[i] !== 1) continue
     const col = i % g.cols
     const row = (i - col) / g.cols
-    if (col >= next.cols || row >= next.rows || next.placeable[row * next.cols + col] !== 1) {
-      lost++
-    }
+    if (col >= next.cols || row >= next.rows || next.placeable[row * next.cols + col] !== 1) lost++
   }
   return lost
 }
@@ -103,26 +81,4 @@ export function usageByIndex(g: CellGrid, paletteSize: number): Uint32Array {
     if (v < paletteSize && isPlaceable(g, i)) out[v]++
   }
   return out
-}
-
-/**
- * 两个网格是否完全一样。
- * 空档遮罩也要比 —— 格子值一样但空档不同，是两个不同的板阵，
- * 只比 cells 会把真正的结构差异藏起来。
- * placeable 缺省 = 全是板，所以缺省和全 1 视为相等。
- */
-export function gridEquals(a: CellGrid, b: CellGrid): boolean {
-  if (a.cols !== b.cols || a.rows !== b.rows) return false
-  if (a.cells.length !== b.cells.length) return false
-  for (let i = 0; i < a.cells.length; i++) if (a.cells[i] !== b.cells[i]) return false
-  if (a.placeable && b.placeable) {
-    if (a.placeable.length !== b.placeable.length) return false
-    for (let i = 0; i < a.placeable.length; i++) {
-      if (a.placeable[i] !== b.placeable[i]) return false
-    }
-    return true
-  }
-  const only = a.placeable ?? b.placeable
-  if (only) for (let i = 0; i < only.length; i++) if (only[i] !== 1) return false
-  return true
 }

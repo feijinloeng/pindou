@@ -46,7 +46,7 @@ export function hexToRgb(hex: string): [number, number, number] {
  * 标注用的亮度（ITU-R BT.601 的加权，0-1）。
  * ⚠️ 这不是 WCAG 相对亮度，也不是色差用的 Lab —— 只用来决定格子上印黑字还是白字。
  */
-export function labelLuminance(hex: string): number {
+function labelLuminance(hex: string) {
   const [r, g, b] = hexToRgb(hex)
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255
 }
@@ -54,21 +54,4 @@ export function labelLuminance(hex: string): number {
 /** 浅底黑字、深底白字（第 7.8 节 ⑤，阈值 0.55） */
 export function labelTextColor(hex: string): 'black' | 'white' {
   return labelLuminance(hex) > 0.55 ? 'black' : 'white'
-}
-
-export function colorAt(palette: Palette, index: number): BeadColor | null {
-  return palette.colors[index] ?? null
-}
-
-/**
- * 把颜色按系数调暗（预览图里豆孔的颜色就是 shadeHex(hex, 0.68)）。
- * 只乘不减，保色相不变。
- */
-export function shadeHex(hex: string, factor: number): string {
-  const [r, g, b] = hexToRgb(hex)
-  const shade = (v: number) =>
-    Math.max(0, Math.min(255, Math.round(v * factor)))
-      .toString(16)
-      .padStart(2, '0')
-  return `#${shade(r)}${shade(g)}${shade(b)}`.toUpperCase()
 }

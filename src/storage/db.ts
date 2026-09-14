@@ -43,7 +43,10 @@ export function openDb(): Promise<IDBDatabase> {
         }
       }
       request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error ?? new Error('打不开本地数据库'))
+      request.onerror = () => {
+        openPromise = null
+        reject(request.error ?? new Error('打不开本地数据库'))
+      }
     })
   }
   return openPromise
@@ -82,12 +85,6 @@ export function remove(store: StoreName, id: string): Promise<undefined> {
   return withStore(store, 'readwrite', (s) => s.delete(id))
 }
 
-export async function clearAll(): Promise<void> {
-  for (const store of ['projects', 'drafts', 'images'] as StoreName[]) {
-    await withStore(store, 'readwrite', (s) => s.clear())
-  }
-}
-
 // --- 工程 ---
 
 /**
@@ -115,10 +112,17 @@ export async function listProjectEntries(): Promise<LibraryListing> {
   const [stored, drafts] = await Promise.all([getAll<unknown>('projects'), getAll<unknown>('drafts')])
   const issues: string[] = []
 
-  const draftsById = new Map<string, Project>()
+  const draftsById = new Map<string, Draft>()
   for (const raw of drafts) {
-    const project = decodeStoredProject((raw as Draft | undefined)?.project)
-    if (project) draftsById.set(project.id, project)
+    const record = raw as Partial<Draft> | undefined
+    const project = decodeStoredProject(record?.project)
+    if (project) {
+      draftsById.set(project.id, {
+        id: project.id,
+        updatedAt: typeof record?.updatedAt === 'string' ? record.updatedAt : project.updatedAt,
+        project,
+      })
+    }
   }
 
   const entries: LibraryEntry[] = []
@@ -131,22 +135,17 @@ export async function listProjectEntries(): Promise<LibraryListing> {
     }
     const draft = draftsById.get(project.id)
     draftsById.delete(project.id)
-    const useDraft = !!draft && draft.updatedAt > project.updatedAt
-    entries.push({ project: useDraft ? draft : project, hasNewerDraft: useDraft })
+    const useDraft = !!draft && draft.project.updatedAt > project.updatedAt
+    entries.push({ project: useDraft ? draft.project : project, hasNewerDraft: useDraft })
   }
   // 只有草稿、没有正式工程的条目（新建后写盘失败过）也别漏
   for (const draft of draftsById.values()) {
-    entries.push({ project: draft, hasNewerDraft: true })
-    issues.push(`${draft.name}：只有草稿，没有正式工程`)
+    entries.push({ project: draft.project, hasNewerDraft: true })
+    issues.push(`${draft.project.name}：只有草稿，没有正式工程`)
   }
 
   entries.sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
   return { entries, issues }
-}
-
-export async function listProjects(): Promise<Project[]> {
-  const { entries } = await listProjectEntries()
-  return entries.map((entry) => entry.project)
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
@@ -199,13 +198,19 @@ export async function saveDraft(project: Project): Promise<void> {
   })
 }
 
-export async function getDraft(id: string): Promise<Project | undefined> {
-  return decodeStoredProject((await get<Draft>('drafts', id))?.project) ?? undefined
+async function readDraft(id: string): Promise<Draft | undefined> {
+  const record = await get<Draft>('drafts', id)
+  const project = decodeStoredProject(record?.project)
+  if (!project) return undefined
+  return {
+    id: project.id,
+    updatedAt: typeof record?.updatedAt === 'string' ? record.updatedAt : project.updatedAt,
+    project,
+  }
 }
 
-export async function listDrafts(): Promise<Project[]> {
-  const all = await getAll<Draft>('drafts')
-  return all.map((d) => decodeStoredProject(d.project)).filter((p): p is Project => !!p)
+export async function getDraft(id: string): Promise<Project | undefined> {
+  return (await readDraft(id))?.project
 }
 
 export function clearDraft(id: string): Promise<undefined> {
@@ -260,11 +265,13 @@ export function forgetLastProject(): void {
 export async function restoreLastProject(): Promise<Project | undefined> {
   const id = lastProjectId()
   if (!id) return undefined
-  const project = (await getDraft(id)) ?? (await getProject(id))
-  if (!project) return undefined
-  if (project.name.startsWith('[已删除] ')) {
+  const [project, draft] = await Promise.all([getProject(id), readDraft(id)])
+  const latest =
+    draft && (!project || draft.project.updatedAt > project.updatedAt) ? draft.project : project
+  if (!latest) return undefined
+  if (latest.name.startsWith('[已删除] ')) {
     forgetLastProject()
     return undefined
   }
-  return project
+  return latest
 }

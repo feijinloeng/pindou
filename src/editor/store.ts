@@ -519,7 +519,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       paletteId: pid,
       allowedCodes: project.allowedCodes,
       colorIndex: defaultColorIndex(getPalette(pid)),
-      conversion: DEFAULT_SETTINGS,
+      conversion: project.conversion ?? DEFAULT_SETTINGS,
       clipboard: null,
       selection: [],
       pending: null,

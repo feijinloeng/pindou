@@ -26,9 +26,9 @@ export interface CellPatch {
   metaAfter?: HistoryMeta
 }
 
-export const HISTORY_DEPTH = 50
+const HISTORY_DEPTH = 50
 /** 单次操作上限：超过就不计入撤销历史，只留改动（第 13.4 节） */
-export const MAX_PATCH_CELLS = 2_000_000
+const MAX_PATCH_CELLS = 2_000_000
 
 const INITIAL_CAPACITY = 1024
 
@@ -110,7 +110,7 @@ export class PatchRecorder {
 }
 
 /** 撤销按逆序回放（同一格写过多次时顺序很关键），重做按正序 */
-export function applyPatch(grid: CellGrid, patch: CellPatch, direction: 'undo' | 'redo'): void {
+function applyPatch(grid: CellGrid, patch: CellPatch, direction: 'undo' | 'redo'): void {
   const values = direction === 'undo' ? patch.before : patch.after
   const cells = grid.cells
   if (direction === 'undo') {

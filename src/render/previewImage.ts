@@ -7,8 +7,6 @@ import { type Palette } from '../domain/palette'
  * 每格直接填满色块，避免高像素预览中密集圆豆和豆孔造成视觉噪点。
  */
 export const PREVIEW_SCALES = { standard: 8, hd: 16, print: 32 } as const
-export type PreviewScale = keyof typeof PREVIEW_SCALES
-
 export const MAX_PREVIEW_SIDE = 16384
 export const MAX_PREVIEW_PIXELS = 100_000_000
 export const PEGBOARD_BG = '#FAFAF8'

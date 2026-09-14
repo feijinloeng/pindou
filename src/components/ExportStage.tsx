@@ -5,11 +5,7 @@ import { usedCells } from '../domain/grid'
 import { useEditor } from '../editor/store'
 import { t } from '../i18n/zh'
 import { downloadBytes } from '../render/download'
-import {
-  buildExportBundle,
-  type ExportContext,
-  type ExportSelection,
-} from '../render/exporters'
+import type { ExportContext, ExportSelection } from '../render/exporters'
 import { PREVIEW_SCALES } from '../render/previewImage'
 import { renderThumbnailDataUrl } from '../render/thumbnail'
 import { useOverlayEscape } from './overlayState'
@@ -90,6 +86,7 @@ export default function ExportStage() {
   const run = async () => {
     setBusy(true)
     try {
+      const { buildExportBundle } = await import('../render/exporters')
       const bundle = await buildExportBundle(context, selection)
       // 只触发一次下载：多选已打包成 zip，浏览器不会拦
       downloadBytes(bundle.bytes, bundle.filename, bundle.mime)

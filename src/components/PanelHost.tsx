@@ -10,7 +10,7 @@ import { t } from '../i18n/zh'
 import { gsap, MOTION, reducedMotion, usePresence } from '../motion'
 import { useEditor, type PanelId } from '../editor/store'
 import { Modal } from './ui'
-import { useMediaQuery } from './media'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import { Z } from './overlayState'
 
 const TITLES: Record<PanelId, string> = {

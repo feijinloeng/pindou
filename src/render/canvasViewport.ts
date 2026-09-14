@@ -21,11 +21,6 @@ export function clampZoom(z: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
 }
 
-/** 100% 吸附：滑块靠近 1 时直接落到 1（yourlin 的细节） */
-export function snapZoom(z: number): number {
-  return Math.abs(z - 1) < 0.06 ? 1 : z
-}
-
 export interface CellRect {
   c0: number
   c1: number

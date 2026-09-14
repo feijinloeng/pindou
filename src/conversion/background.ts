@@ -61,38 +61,13 @@ export function sampleBackground(image: SourceImage, bandRatio = 0.02): Backgrou
   return { rgb, confidence: total === 0 ? 0 : agree / total }
 }
 
-/** 只看四角的中位色。保留给需要“纯背景色”的调用方（测试、旧路径） */
-export function sampleCornerColor(image: SourceImage, ratio = 0.025): Rgb {
-  const { width, height, data } = image
-  const w = Math.max(1, Math.round(width * ratio))
-  const h = Math.max(1, Math.round(height * ratio))
-  const samples: number[][] = [[], [], []]
-  const corners: Array<[number, number]> = [
-    [0, 0],
-    [width - w, 0],
-    [0, height - h],
-    [width - w, height - h],
-  ]
-  for (const [x0, y0] of corners) {
-    for (let y = y0; y < y0 + h && y < height; y++) {
-      for (let x = x0; x < x0 + w && x < width; x++) {
-        const i = (y * width + x) * 4
-        samples[0].push(data[i])
-        samples[1].push(data[i + 1])
-        samples[2].push(data[i + 2])
-      }
-    }
-  }
-  return [median(samples[0]), median(samples[1]), median(samples[2])] as Rgb
-}
-
 function median(values: number[]): number {
   values.sort((a, b) => a - b)
   return values[values.length >> 1]
 }
 
 /** RGB 欧氏距离（阈值 26 就是拿这个量的） */
-export function rgbDistance(a: Rgb, b: Rgb): number {
+function rgbDistance(a: Rgb, b: Rgb): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 }
 

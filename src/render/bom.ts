@@ -1,9 +1,6 @@
-import { EMPTY, type CellGrid, usageByIndex } from '../domain/grid.ts'
-import { hexToRgb, paletteDisplayLabel, type Palette } from '../domain/palette.ts'
-import { PT_PER_MM } from '../domain/geometry.ts'
+import { type CellGrid, usageByIndex } from '../domain/grid.ts'
+import { hexToRgb, type Palette } from '../domain/palette.ts'
 import { gray255, type PdfSink } from './pdf.ts'
-
-export { paletteDisplayLabel }
 
 export interface BomRow {
   /** 1-2 位编号，按用量降序分配 */
@@ -171,5 +168,3 @@ export function bomToCsv(rows: BomRow[], paletteName: string): string {
   lines.push(`合计,,,,${totalBeads(rows)},${rows.length} 色`)
   return `\uFEFF${lines.join('\r\n')}\r\n`
 }
-
-export { EMPTY, PT_PER_MM }

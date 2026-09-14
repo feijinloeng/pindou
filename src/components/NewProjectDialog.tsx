@@ -31,6 +31,8 @@ export default function NewProjectDialog({
       await putProject(useEditor.getState().toProject())
       setName('')
       onClose()
+    } catch (cause) {
+      window.alert(`${copy.writeFailed}：${cause instanceof Error ? cause.message : String(cause)}`)
     } finally {
       setBusy(false)
     }

@@ -5,18 +5,6 @@ export interface WriteSink {
   set(col: number, row: number, value: number): boolean
 }
 
-export function directSink(grid: CellGrid): WriteSink {
-  return {
-    set(col, row, value) {
-      if (!inBounds(grid, col, row)) return false
-      const i = row * grid.cols + col
-      if (grid.cells[i] === value) return false
-      grid.cells[i] = value
-      return true
-    },
-  }
-}
-
 /** 写入单格；画笔和油漆桶等工具共用这条写入路径。 */
 export function paint(
   sink: WriteSink,
@@ -29,53 +17,11 @@ export function paint(
   return sink.set(col, row, value)
 }
 
-/** 橡皮：设回 EMPTY，不是设成白色 */
-export function erase(sink: WriteSink, grid: CellGrid, col: number, row: number): boolean {
-  return paint(sink, grid, col, row, EMPTY)
-}
-
 /** 取色。空格返回 null */
 export function pickColor(grid: CellGrid, col: number, row: number): number | null {
   if (!inBounds(grid, col, row)) return null
   const v = grid.cells[row * grid.cols + col]
   return v === EMPTY ? null : v
-}
-
-/**
- * 画笔一笔：把两个点之间的格子都填上（Bresenham）。
- * 指针事件是跳着来的，不补线就会断断续续。
- */
-export function drawLine(
-  sink: WriteSink,
-  grid: CellGrid,
-  c0: number,
-  r0: number,
-  c1: number,
-  r1: number,
-  value: number,
-): number {
-  let col = c0
-  let row = r0
-  const dx = Math.abs(c1 - c0)
-  const dy = -Math.abs(r1 - r0)
-  const sx = c0 < c1 ? 1 : -1
-  const sy = r0 < r1 ? 1 : -1
-  let err = dx + dy
-  let painted = 0
-  for (;;) {
-    if (paint(sink, grid, col, row, value)) painted++
-    if (col === c1 && row === r1) break
-    const e2 = 2 * err
-    if (e2 >= dy) {
-      err += dy
-      col += sx
-    }
-    if (e2 <= dx) {
-      err += dx
-      row += sy
-    }
-  }
-  return painted
 }
 
 /**
