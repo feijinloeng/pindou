@@ -8,6 +8,7 @@ import { Btn } from './ui'
 /** Image import: accept a file, then convert it to the current board layout at its native aspect ratio. */
 export default function ConvertPanel() {
   const converting = useEditor((s) => s.converting)
+  const hasBoards = useEditor((s) => s.geom.boards.length > 0)
   const progress = useEditor((s) => s.progress)
   const fileRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -53,10 +54,16 @@ export default function ConvertPanel() {
         }}
       />
       <ImageIcon size={32} className="text-ink-2" aria-hidden />
-      <Btn variant="primary" onClick={() => fileRef.current?.click()} disabled={converting}>
+      <Btn
+        variant="primary"
+        onClick={() => fileRef.current?.click()}
+        disabled={converting || !hasBoards}
+      >
         {converting ? `${copy.running}…` : copy.pickImage}
       </Btn>
-      <p className="max-w-[380px] text-sm leading-relaxed text-ink-2">{copy.pickHint}</p>
+      <p className="max-w-[380px] text-sm leading-relaxed text-ink-2">
+        {hasBoards ? copy.pickHint : copy.noBoards}
+      </p>
       {dragging && <p className="text-xs text-accent">{copy.dropActive}</p>}
       {progress && (
         <div className="w-full max-w-[320px]">

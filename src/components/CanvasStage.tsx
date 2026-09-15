@@ -279,33 +279,27 @@ export default function CanvasStage() {
    *  - Safari：捏合走非标准的 gesture 事件
    *  - macOS 上 Cmd+滚轮也可能带 metaKey
    *
-   * 挂在 document 上是因为"在右侧色号表上捏合"也应该缩画布，而不是缩整个网页；
-   * 但面板上的普通滚轮要留给面板自己滚。
+   * 只挂在画布覆盖层上：画布滚轮可以缩放，面板和浏览器页面缩放保留原生行为。
    */
   useEffect(() => {
     const el = overlayRef.current
     if (!el) return
-    const wrapper = wrapRef.current
-
     const zoomBy = (deltaY: number, pinch: boolean, x: number, y: number) => {
       const s = useEditor.getState()
       const next = zoomFromWheel(s.vp, deltaY, pinch, x, y)
       s.setVp(clampViewport(next, s.grid.cols, s.grid.rows, size.width, size.height))
     }
-    /** 画布外的捏合锚在画布中心，画布内的锚在光标那一点 */
-    const point = (clientX: number | undefined, clientY: number | undefined, inside: boolean) => {
+    /** 缩放锚在光标那一点 */
+    const point = (clientX: number | undefined, clientY: number | undefined) => {
       const rect = el.getBoundingClientRect()
-      if (!inside) return { x: rect.width / 2, y: rect.height / 2 }
       return { x: (clientX ?? 0) - rect.left, y: (clientY ?? 0) - rect.top }
     }
 
     const onWheel = (e: WheelEvent) => {
-      const inside = wrapper ? wrapper.contains(e.target as Node) : false
-      const pinch = e.ctrlKey || e.metaKey
-      if (!inside && !pinch) return // 面板上的普通滚轮：让面板滚
+      // 监听只挂在画布上，面板和浏览器页面缩放不被拦截。
       e.preventDefault()
-      const { x, y } = point(e.clientX, e.clientY, inside)
-      zoomBy(e.deltaY, pinch, x, y)
+      const { x, y } = point(e.clientX, e.clientY)
+      zoomBy(e.deltaY, e.ctrlKey || e.metaKey, x, y)
     }
 
     let gestureScale = 1
@@ -319,21 +313,20 @@ export default function CanvasStage() {
       const scale = g.scale ?? 1
       const deltaY = -Math.log(scale / gestureScale) / 0.01
       gestureScale = scale
-      const inside = wrapper ? wrapper.contains(g.target as Node) : false
-      const { x, y } = point(g.clientX, g.clientY, inside)
+      const { x, y } = point(g.clientX, g.clientY)
       zoomBy(deltaY, true, x, y)
     }
     const onGestureEnd = (e: Event) => e.preventDefault()
 
-    document.addEventListener('wheel', onWheel, { passive: false })
-    document.addEventListener('gesturestart', onGestureStart)
-    document.addEventListener('gesturechange', onGestureChange)
-    document.addEventListener('gestureend', onGestureEnd)
+    el.addEventListener('wheel', onWheel, { passive: false })
+    el.addEventListener('gesturestart', onGestureStart)
+    el.addEventListener('gesturechange', onGestureChange)
+    el.addEventListener('gestureend', onGestureEnd)
     return () => {
-      document.removeEventListener('wheel', onWheel)
-      document.removeEventListener('gesturestart', onGestureStart)
-      document.removeEventListener('gesturechange', onGestureChange)
-      document.removeEventListener('gestureend', onGestureEnd)
+      el.removeEventListener('wheel', onWheel)
+      el.removeEventListener('gesturestart', onGestureStart)
+      el.removeEventListener('gesturechange', onGestureChange)
+      el.removeEventListener('gestureend', onGestureEnd)
     }
   }, [size.width, size.height])
 

@@ -232,18 +232,19 @@ export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
   let cols = 0
   let rows = 0
   const pitches = new Set<number>()
-  for (const placement of placements) {
+  for (const raw of placements) {
+    const placement = raw as Partial<BoardPlacement> | null
     const profile = findBoardProfile(placement?.board)
     if (!profile) return { kind: 'unknown-board', board: String(placement?.board) }
-    if (!Number.isInteger(placement.col) || !Number.isInteger(placement.row)) {
-      return { kind: 'bad-placement', placement }
+    const col = placement?.col
+    const row = placement?.row
+    if (typeof col !== 'number' || !Number.isInteger(col) || typeof row !== 'number' || !Number.isInteger(row)) {
+      return { kind: 'bad-placement', placement: raw as BoardPlacement }
     }
-    if (placement.col < 0 || placement.row < 0) {
-      return { kind: 'bad-placement', placement }
-    }
+    if (col < 0 || row < 0) return { kind: 'bad-placement', placement: raw as BoardPlacement }
     pitches.add(profile.pitchMm)
-    cols = Math.max(cols, placement.col + profile.pegs)
-    rows = Math.max(rows, placement.row + profile.pegs)
+    cols = Math.max(cols, col + profile.pegs)
+    rows = Math.max(rows, row + profile.pegs)
   }
   for (let i = 0; i < placements.length; i++) {
     const first = placements[i]

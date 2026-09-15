@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf'
 
 import type { Rgb } from '../conversion/colorDistance.ts'
-import { PINDOU_BOM_CJK_FONT_BASE64 } from './fonts/pindouBomCjk.ts'
+import { t } from '../i18n/zh.ts'
 
 const CJK_FONT_FILE = 'PindouBOMCJK-Regular.ttf'
 const CJK_FONT_NAME = 'PindouBOMCJK'
@@ -47,9 +47,11 @@ export interface PdfSink {
   output(): Uint8Array
 }
 
-interface JsPdfOptions {
+export interface JsPdfOptions {
   widthPt: number
   heightPt: number
+  cjkFontBase64: string
+  compress?: boolean
 }
 
 /**
@@ -87,17 +89,19 @@ function escapeText(str: string): string {
 class JsPdfSink implements PdfSink {
   private doc: jsPDF
   private cjkFontReady = false
+  private readonly cjkFontBase64: string
   pageWidth: number
   pageHeight: number
 
   constructor(options: JsPdfOptions) {
     this.pageWidth = options.widthPt
     this.pageHeight = options.heightPt
+    this.cjkFontBase64 = options.cjkFontBase64
     this.doc = new jsPDF({
       unit: 'pt',
       format: [options.widthPt, options.heightPt],
       orientation: options.widthPt > options.heightPt ? 'landscape' : 'portrait',
-      compress: true,
+      compress: options.compress ?? true,
     })
     this.doc.setFont('helvetica', 'normal')
   }
@@ -123,7 +127,7 @@ class JsPdfSink implements PdfSink {
   setFont(family: 'latin' | 'cjk'): void {
     if (family === 'cjk') {
       if (!this.cjkFontReady) {
-        this.doc.addFileToVFS(CJK_FONT_FILE, PINDOU_BOM_CJK_FONT_BASE64)
+        this.doc.addFileToVFS(CJK_FONT_FILE, this.cjkFontBase64)
         this.doc.addFont(CJK_FONT_FILE, CJK_FONT_NAME, 'normal', 'Identity-H')
         this.cjkFontReady = true
       }
@@ -199,15 +203,48 @@ class JsPdfSink implements PdfSink {
   }
 
   text(str: string, x: number, baselineY: number, sizePt: number, mode: 'fill' | 'fillstroke'): void {
+    const metadata = this.doc.getFont().metadata as { characterToGlyph?: (code: number) => number }
+    if (metadata.characterToGlyph && [...str].some((char) => !metadata.characterToGlyph!(char.codePointAt(0)!))) {
+      this.fallbackText(str, x, baselineY, sizePt, mode)
+      return
+    }
     this.doc.setFontSize(sizePt)
     if (mode === 'fillstroke') {
       // 中间调的光环：先设描边色和线宽，再让 jsPDF 出 2 Tr
-      this.doc.text(escapeText(str), x, this.pageHeight - baselineY, {
+      this.doc.text(str, x, this.pageHeight - baselineY, {
         renderingMode: 'fillThenStroke',
       })
     } else {
-      this.doc.text(escapeText(str), x, this.pageHeight - baselineY)
+      this.doc.text(str, x, this.pageHeight - baselineY)
     }
+  }
+
+  private fallbackText(str: string, x: number, baselineY: number, sizePt: number, mode: 'fill' | 'fillstroke'): void {
+    // ponytail: unsupported text is rasterized at 300 dpi; embed a larger font if fully vector Unicode is required.
+    const scale = 300 / 72
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error(t('export').textRenderFailed)
+    const font = `${sizePt * scale}px sans-serif`
+    ctx.font = font
+    const metrics = ctx.measureText(str)
+    const pad = Math.ceil(this.doc.getLineWidth() * scale) + 2
+    const left = Math.max(0, metrics.actualBoundingBoxLeft)
+    const ascent = Math.ceil(metrics.actualBoundingBoxAscent)
+    const descent = Math.ceil(metrics.actualBoundingBoxDescent)
+    canvas.width = Math.ceil(left + Math.max(metrics.width, metrics.actualBoundingBoxRight)) + pad * 2
+    canvas.height = Math.max(1, ascent + descent) + pad * 2
+    ctx.font = font
+    ctx.fillStyle = this.doc.getTextColor()
+    if (mode === 'fillstroke') {
+      ctx.strokeStyle = this.doc.getDrawColor()
+      ctx.lineWidth = this.doc.getLineWidth() * scale
+      ctx.strokeText(str, left + pad, ascent + pad)
+    }
+    ctx.fillText(str, left + pad, ascent + pad)
+    this.doc.addImage(canvas, 'PNG', x - (left + pad) / scale,
+      this.pageHeight - baselineY - (ascent + pad) / scale,
+      canvas.width / scale, canvas.height / scale)
   }
 
   addPage(widthPt: number, heightPt: number): void {

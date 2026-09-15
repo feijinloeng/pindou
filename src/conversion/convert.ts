@@ -30,16 +30,6 @@ export interface ConversionSettings {
   fit: FitMode
 }
 
-export const DEFAULT_SETTINGS: ConversionSettings = {
-  strategyId: 'pixelart',
-  maxColors: 0,
-  dither: 0,
-  cropToSubject: false,
-  removeBackground: false,
-  clearExisting: true,
-  fit: 'contain',
-}
-
 interface ConvertInput {
   image: SourceImage
   /** 色板 RGB（顺序 = 色板索引） */

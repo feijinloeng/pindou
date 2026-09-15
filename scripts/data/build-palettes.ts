@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * 拉三个数据源 → 归一化 → 写 src/data/palettes.json
+ * 拉三个数据源 → 归一化 → 写完整源数据和运行时紧凑数据。
  *
- * 只让这个脚本写那个文件，永远不手改。
+ * 只让这个脚本写这两个文件，永远不手改。
  * 用 `npm run build:palettes` 跑（Node 24 直接跑 TS，不用装 tsx）。
  *
  * 数据源许可证（都是可商用的）：
@@ -17,6 +17,7 @@ const RAW = 'https://raw.githubusercontent.com'
 const MAXCLEME = `${RAW}/maxcleme/beadcolors/master`
 const HANSBUG = `${RAW}/HansBug/pindou-color-data/main`
 const OUT = join(process.cwd(), 'src/data/palettes.json')
+const RUNTIME_OUT = join(process.cwd(), 'src/data/palettes.runtime.json')
 
 interface BeadColor {
   code: string
@@ -350,6 +351,19 @@ async function main() {
 
   mkdirSync(dirname(OUT), { recursive: true })
   writeFileSync(OUT, `${JSON.stringify(payload, null, 2)}\n`)
+
+  // 首屏只需要显示和匹配用到的字段：来源说明留在完整文件，symbol/rgb 可在运行时还原。
+  const runtimePayload = {
+    palettes: palettes.map(({ id, brand, displayName, pitchMm, beadMm, colors }) => ({
+      id,
+      brand,
+      displayName,
+      pitchMm,
+      beadMm,
+      colors: colors.map(({ code, name, hex, lab }) => [code, name, hex, lab]),
+    })),
+  }
+  writeFileSync(RUNTIME_OUT, `${JSON.stringify(runtimePayload)}\n`)
 
   const total = palettes.reduce((n, p) => n + p.colors.length, 0)
   console.log(`\n写入 ${OUT}`)

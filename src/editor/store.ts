@@ -24,7 +24,6 @@ import { EDITOR_FIT_PAD, fitViewport, type Viewport } from '../render/canvasView
 import { History, PatchRecorder, type CellPatch, type HistoryMeta } from './history'
 import {
   copySelection,
-  invertSelection,
   makeRect,
   mirrorRect,
   pasteClip,
@@ -36,17 +35,26 @@ import {
 } from './selection'
 import { fillSelection } from './selection'
 import { floodFill, paint, pickColor, type WriteSink } from './tools'
-import { DEFAULT_SETTINGS, type ConversionSettings } from '../conversion/convert'
+import type { ConversionSettings } from '../conversion/convert'
+import { DEFAULT_SETTINGS } from '../conversion/settings'
 import {
   createProject,
   normalizeGridForLayout,
   type Project,
   type ProjectView,
 } from '../domain/project'
-import { putProject, rememberLastProject, restoreLastProject, saveDraft, getImage, putImage, remove } from '../storage/db'
+import {
+  getImage,
+  putImage,
+  putProject,
+  purgeProject,
+  trashProject,
+  rememberLastProject,
+  restoreLastProject,
+  saveDraft,
+} from '../storage/db'
 import { compressForCache } from '../storage/imageCache'
 import { runConvert } from '../conversion/convertClient'
-import { resolveStrategy, STRATEGIES } from '../conversion/strategies'
 import { decodeImageFile } from '../conversion/decode'
 import type { Rgb } from '../conversion/colorDistance'
 import type { SourceImage } from '../conversion/types'
@@ -70,8 +78,6 @@ export interface EditorState {
   /** 上次保存时间（界面显示"已保存"用） */
   savedAt: string | null
   saving: boolean
-  /** 上次保存失败的原文（界面显示"保存失败，点击重试"） */
-  saveError: string | null
   geom: BoardGeometry
   grid: CellGrid
   /** 每次改动 +1。覆盖层（进行中的笔画）靠它重画 */
@@ -94,7 +100,6 @@ export interface EditorState {
   showCodes: boolean
   canUndo: boolean
   canRedo: boolean
-  undoBytes: number
   notice: string | null
   /** 通知级别：error 不自动消失，必须手动关掉或纠正 */
   noticeKind: 'info' | 'error'
@@ -103,23 +108,9 @@ export interface EditorState {
   /** 导入的源图（解码后、已限制尺寸） */
   sourceImage: SourceImage | null
   sourceName: string | null
-  /** 源图是本地缓存的小图（刷新后恢复的），不是用户刚导入的原图 */
-  sourceCached: boolean
   conversion: ConversionSettings
   converting: boolean
   progress: { stage: string; ratio: number } | null
-  lastConvert: {
-    ms: number
-    kind: string
-    used: number
-    dropped: number
-    cropped: boolean
-    /** 实际生效的策略（选自动时由分析结果决定） */
-    strategy: string
-    /** 背景色不可靠，自动裁切被跳过 */
-    cropSkipped: boolean
-  } | null
-
   /** 立即应用自由摆放的板块；keepContent=false 时清空画布 */
   applyLayout(layout: BoardLayout, keepContent?: boolean): string | null
   addBoard(board: BoardTypeId, col: number, row: number): string | null
@@ -133,14 +124,14 @@ export interface EditorState {
   loadProject(project: Project, saved?: boolean): void
   /** 新建一个空工程 */
   newProject(name?: string): void
+  /** Serialize deletion with saves before leaving the current project. */
+  deleteProject(id: string, permanent?: boolean): Promise<void>
   /** 刷新后把上次的草稿捡回来 */
   restoreLast(): Promise<boolean>
   setTool(tool: ToolId): void
   setColor(index: number): void
   setSelectedBoard(board: BoardTypeId): void
   setPalette(id: string): void
-  toggleCode(code: string): void
-  restoreAllCodes(): void
   setVp(vp: Viewport): void
   fitTo(width: number, height: number, dpr?: number): void
   /** 画布旁开着哪个临时面板（纯界面状态，不进工程文件） */
@@ -166,7 +157,6 @@ export interface EditorState {
   redo(): void
   selectAll(): void
   clearSel(): void
-  invertSel(): void
   fillSel(value: number): void
   eraseSel(): void
   copySel(): void
@@ -178,8 +168,6 @@ export interface EditorState {
   importImage(file: File): Promise<void>
   /** 刷新/重开工程后把缓存的源图捡回来（只是缩略图大小，不是原图） */
   restoreSourceImage(): Promise<boolean>
-  clearSourceImage(): void
-  setConversion(patch: Partial<ConversionSettings>): void
   runConvert(): Promise<void>
 }
 
@@ -196,14 +184,14 @@ let rectAnchor: { col: number; row: number } | null = null
  */
 let saveChain: Promise<void> = Promise.resolve()
 let queuedSaves = 0
+let projectGeneration = 0
 
-function enqueueSave(run: (explicit: boolean) => Promise<void>, explicit: boolean): Promise<void> {
+function enqueueSave(run: () => Promise<void>): Promise<void> {
   queuedSaves++
-  const next = saveChain.then(
-    () => run(explicit),
-    () => run(explicit),
-  ).finally(() => {
+  useEditor.setState({ saving: true })
+  const next = saveChain.then(run, run).finally(() => {
     queuedSaves--
+    useEditor.setState({ saving: queuedSaves > 0 })
   })
   saveChain = next
   return next
@@ -260,7 +248,7 @@ function preserveWorldPosition(
 }
 
 function syncHistory() {
-  return { canUndo: history.canUndo, canRedo: history.canRedo, undoBytes: history.memoryBytes() }
+  return { canUndo: history.canUndo, canRedo: history.canRedo }
 }
 
 export const useEditor = create<EditorState>((set, get) => ({
@@ -277,7 +265,6 @@ export const useEditor = create<EditorState>((set, get) => ({
   createdAt: new Date().toISOString(),
   savedAt: null,
   saving: false,
-  saveError: null,
   geom: initial.geom,
   grid: createGrid(initial.geom.cols, initial.geom.rows, EMPTY, initial.geom.placeable),
   version: 0,
@@ -295,17 +282,14 @@ export const useEditor = create<EditorState>((set, get) => ({
   showCodes: true,
   canUndo: false,
   canRedo: false,
-  undoBytes: 0,
   notice: null,
   noticeKind: 'info' as const,
   pending: null,
   sourceImage: null,
   sourceName: null,
-  sourceCached: false,
   conversion: DEFAULT_SETTINGS,
   converting: false,
   progress: null,
-  lastConvert: null,
 
   applyLayout(layout, keepContent = true) {
     let geom: BoardGeometry
@@ -444,11 +428,12 @@ export const useEditor = create<EditorState>((set, get) => ({
       name: state.name,
       customer: state.customer,
       createdAt: state.createdAt,
-      updatedAt: new Date().toISOString(),
+      // Keep successive saves ordered even within one millisecond.
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(state.savedAt ?? state.createdAt) + 1)).toISOString(),
       layout: state.layout,
       paletteId: state.paletteId,
       allowedCodes: state.allowedCodes,
-      grid: state.grid,
+      grid: { ...state.grid, cells: state.grid.cells.slice() },
       conversion: state.conversion,
       view: {
         zoom: state.vp.zoom,
@@ -461,34 +446,53 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   /** 后台自动保存（explicit=false）只保命，不算"用户保存好了" */
   async saveNow(explicit = false) {
-    if (typeof indexedDB === 'undefined') return
-    set({ saving: true })
-    return enqueueSave(async (isExplicit) => {
-      // 快照在"轮到这一次"的时候才取：排队期间的新编辑不会被旧快照覆盖
+    if (explicit) get().pointerUp()
+    const initial = get()
+    if (!explicit && initial.projectId === 'local-draft' && initial.commitVersion === 0) return
+    if (typeof indexedDB === 'undefined') {
+      const error = new Error(t('storage').unavailable)
+      set({ notice: t('storage').saveFailed(error.message), noticeKind: 'error' })
+      throw error
+    }
+    const generation = projectGeneration
+    return enqueueSave(async () => {
+      // A queued task must never save a different (or reloaded) project.
+      if (projectGeneration !== generation) return
       const state = get()
-      // 这次保存覆盖的是这一刻的内容：之后任何改动都会让 commitVersion 超过它
+      if (!explicit && state.savedCommitVersion === state.commitVersion) return
       const commitAtSave = state.commitVersion
       try {
         const project = state.toProject()
-        await putProject(project)
-        await saveDraft(project)
+        if (explicit) await putProject(project)
+        else await saveDraft(project)
+        if (projectGeneration !== generation) return
         rememberLastProject(project.id)
-        // 后面还有人排队就不算"保存完了"，否则界面会骗人
-        const last = queuedSaves <= 1
         set({
-          savedAt: last ? project.updatedAt : get().savedAt,
-          // 只有用户自己点的那一次（或者打开已保存工程）才开门去导出。
-          // 后台自动保存不能把流程往前推：它只保证内容没丢
-          savedCommitVersion:
-            last && isExplicit ? commitAtSave : get().savedCommitVersion,
-          saving: !last,
-          saveError: null,
+          savedAt: project.updatedAt,
+          savedCommitVersion: explicit ? commitAtSave : get().savedCommitVersion,
         })
       } catch (error) {
-        const message = error instanceof Error ? error.message : '未知错误'
-        set({ saving: false, saveError: message, notice: `保存失败：${message}`, noticeKind: 'error' })
+        if (projectGeneration === generation) {
+          set({
+            notice: t('storage').saveFailed(error instanceof Error ? error.message : String(error)),
+            noticeKind: 'error',
+          })
+        }
+        throw error
       }
-    }, explicit)
+    })
+  },
+
+  deleteProject(id, permanent = false) {
+    return enqueueSave(async () => {
+      if (get().projectId === id && !permanent) {
+        get().pointerUp()
+        await saveDraft(get().toProject())
+      }
+      if (permanent) await purgeProject(id)
+      else await trashProject(id)
+      if (get().projectId === id) get().newProject()
+    })
   },
 
   loadProject(project, saved = true) {
@@ -502,6 +506,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const normalized = normalizeGridForLayout(project.grid, geom)
     const pid = getPalette(project.paletteId).id
     const commitVersion = get().commitVersion + 1
+    projectGeneration++
     invalidateConversion()
     history.clear()
     recording = null
@@ -525,14 +530,11 @@ export const useEditor = create<EditorState>((set, get) => ({
       pending: null,
       converting: false,
       progress: null,
-      lastConvert: null,
       sourceImage: null,
       sourceName: null,
-      sourceCached: false,
-      savedAt: saved ? project.updatedAt : null,
+      savedAt: project.updatedAt,
       savedCommitVersion: saved ? commitVersion : null,
-      saving: false,
-      saveError: null,
+      saving: queuedSaves > 0,
       panel: null,
       stage: 'edit',
       notice: `已打开《${project.name}》`,
@@ -540,7 +542,6 @@ export const useEditor = create<EditorState>((set, get) => ({
       commitVersion,
       canUndo: false,
       canRedo: false,
-      undoBytes: 0,
       vp: {
         zoom: project.view.zoom,
         panX: project.view.panX,
@@ -553,13 +554,16 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   async restoreLast() {
     if (typeof indexedDB === 'undefined') return false
+    const generation = projectGeneration
+    const commitVersion = get().commitVersion
     try {
-      const project = await restoreLastProject()
-      if (!project) return false
-      get().loadProject(project)
-      set({ notice: `已恢复上次的《${project.name}》` })
+      const latest = await restoreLastProject()
+      if (!latest || generation !== projectGeneration || get().commitVersion !== commitVersion || get().pending) return false
+      get().loadProject(latest.project, !latest.hasNewerDraft)
+      set({ notice: t('storage').restored(latest.project.name) })
       return true
-    } catch {
+    } catch (error) {
+      set({ notice: t('storage').restoreFailed(String(error)), noticeKind: 'error' })
       return false
     }
   },
@@ -644,55 +648,6 @@ export const useEditor = create<EditorState>((set, get) => ({
     commitRecording(set, get, `换到 ${next.displayName}`, { before, after: metaSnapshot(get()) })
   },
 
-  /**
-   * 排除 / 恢复一个色号。排除时，用它画的格子全部重映射到最近的可用色。
-   * allowedCodes 是白名单：null 表示全可用，所以"被排除了"= 白名单存在且不含它。
-   */
-  toggleCode(code) {
-    const { palette, grid, allowedCodes } = get()
-    const allCodes = palette.colors.map((c) => c.code)
-    const currentAllowed = allowedCodes ?? allCodes
-    const isExcluded = !currentAllowed.includes(code)
-    const nextAllowed = isExcluded
-      ? [...currentAllowed, code]
-      : currentAllowed.filter((c) => c !== code)
-    if (nextAllowed.length === 0) {
-      set({ notice: '不能把所有色号都排除掉' })
-      return
-    }
-    invalidateConversion()
-    const before = metaSnapshot(get())
-    const normalized = nextAllowed.length === allCodes.length ? null : nextAllowed
-    const mask = allCodes.map((c) => nextAllowed.includes(c))
-
-    const victim = palette.colors.findIndex((c) => c.code === code)
-    let remapped = 0
-    if (!isExcluded && victim >= 0) {
-      const matcher = createMatcher(paletteRgb(palette), mask)
-      const target = matcher.match(palette.colors[victim].rgb as never)
-      recording = new PatchRecorder(grid, `排除 ${code}`)
-      for (let i = 0; i < grid.cells.length; i++) {
-        if (grid.cells[i] !== victim) continue
-        const col = i % grid.cols
-        recording.set(col, (i - col) / grid.cols, target)
-        remapped++
-      }
-    }
-    set({ allowedCodes: normalized, converting: false, progress: null })
-    if (!isExcluded) {
-      commitRecording(set, get, `排除 ${code}，重映射 ${remapped} 格`, {
-        before,
-        after: metaSnapshot(get()),
-      })
-    } else {
-      set({ notice: `恢复 ${code}（已重映射的格子不会自动变回来）` })
-    }
-  },
-
-  restoreAllCodes() {
-    invalidateConversion()
-    set({ allowedCodes: null, converting: false, progress: null, notice: '恢复全部色号' })
-  },
   setVp(vp) {
     set({ vp })
   },
@@ -832,15 +787,6 @@ export const useEditor = create<EditorState>((set, get) => ({
     set({ selection: [], version: get().version + 1 })
   },
 
-  invertSel() {
-    const { selection, grid } = get()
-    if (selection.length !== 1) {
-      set({ notice: '反选只支持单选区' })
-      return
-    }
-    set({ selection: invertSelection(selection, grid.cols, grid.rows), version: get().version + 1 })
-  },
-
   fillSel(value) {
     const { selection, grid } = get()
     if (!selection.length) return
@@ -908,6 +854,10 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   async importImage(file) {
+    if (get().geom.boards.length === 0) {
+      set({ notice: t('convert').noBoards })
+      return
+    }
     const occupied = get().grid.cells.some((value) => value !== EMPTY)
     if (occupied && !window.confirm(t('convert').replaceConfirm)) return
     const generation = invalidateConversion()
@@ -918,7 +868,6 @@ export const useEditor = create<EditorState>((set, get) => ({
       set({
         sourceImage: image,
         sourceName: file.name,
-        sourceCached: false,
         conversion: DEFAULT_SETTINGS,
         panel: 'image',
       })
@@ -947,36 +896,20 @@ export const useEditor = create<EditorState>((set, get) => ({
       if (!cached || get().projectId !== id || get().sourceImage) return false
       const image = await decodeImageFile(cached.blob)
       if (get().projectId !== id || get().sourceImage) return false
-      set({ sourceImage: image, sourceName: cached.name, sourceCached: true })
+      set({ sourceImage: image, sourceName: cached.name })
       return true
     } catch {
       return false
     }
   },
 
-  clearSourceImage() {
-    invalidateConversion()
-    const id = get().projectId
-    set({ sourceImage: null, sourceName: null, sourceCached: false, converting: false, progress: null })
-    if (typeof indexedDB !== 'undefined') void remove('images', id).catch(() => undefined)
-  },
-
-  setConversion(patch) {
-    invalidateConversion()
-    const current = get().conversion
-    const next: ConversionSettings = { ...current, ...patch }
-    // 换了内容类型就把目标色数拉回这档的默认值。
-    // 不这么做的话，从通用换到卡通仍停在 24，「这档默认 4 色」的承诺就是假的。
-    // 想手动覆盖就换完再拖滑块（patch 里自带 maxColors 时不动）。
-    if (patch.strategyId && patch.strategyId !== current.strategyId && patch.maxColors === undefined) {
-      next.maxColors = STRATEGIES[resolveStrategy(next.strategyId).id].defaultMaxColors
-    }
-    set({ conversion: next, converting: false, progress: null })
-  },
-
   async runConvert() {
     const generation = invalidateConversion()
     const state = get()
+    if (state.geom.boards.length === 0) {
+      set({ converting: false, progress: null, notice: t('convert').noBoards })
+      return
+    }
     if (!state.sourceImage) {
       set({ notice: '先导入一张图片' })
       return
@@ -1046,15 +979,6 @@ export const useEditor = create<EditorState>((set, get) => ({
         progress: null,
         // 应用完收起图片面板，把画布还回去；想再调从菜单里重新打开
         panel: null,
-        lastConvert: {
-          ms: result.ms,
-          kind: result.kindOfSource,
-          used: result.usedIndexes.length,
-          dropped: result.droppedIndexes.length,
-          cropped: result.cropped,
-          strategy: result.strategyUsed,
-          cropSkipped: result.cropSkipped,
-        },
         notice: recorder.overflowed
           ? '转换完成。改动太大，这一步不计入撤销历史'
           : result.cropSkipped

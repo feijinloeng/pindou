@@ -47,12 +47,24 @@ export const zh = {
     exportProject: '导出工程文件',
     import: '导入工程文件',
     importFailed: '这个文件不是合法的工程文件',
+    importedCopy: '导入副本',
+    actionFailed: '作品操作失败',
     readFailed: '读本地作品库失败',
     writeFailed: '写本地作品库失败',
     retry: '重试',
     updatedAt: '更新于',
     customerLabel: '客户',
     hasDraft: '有更新的草稿',
+  },
+
+  storage: {
+    unavailable: '本地存储不可用',
+    missingProject: '工程不存在或数据已损坏',
+    changedDuringOperation: '内容在操作期间发生变化，请重试。',
+    blocked: '请关闭其他打开拼豆的标签页，再重试。',
+    saveFailed: (message: string) => `保存失败：${message}`,
+    restoreFailed: (message: string) => `恢复上次作品失败：${message}`,
+    restored: (name: string) => `已恢复上次的《${name}》`,
   },
 
   editor: {
@@ -112,6 +124,7 @@ export const zh = {
   convert: {
     title: '导入与转换',
     replaceConfirm: '画布上已经有内容，导入图片会覆盖它（这一步可以撤销）。继续吗？',
+    noBoards: '请先添加一块底板，再导入图片。',
     running: '转换中',
     pickImage: '选择图片',
     pickHint: '支持常见图片格式；图片只在本地处理，不会上传，也可以直接拖到这里。',
@@ -131,6 +144,7 @@ export const zh = {
     exportBundled: (n: number) =>
       `导出完成：${n} 个文件已打包成一个 zip（浏览器不允许一次下多个文件）`,
     exportFailed: '导出失败',
+    textRenderFailed: '无法绘制导出文字，请重试。',
   },
 
   picker: {

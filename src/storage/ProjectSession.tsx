@@ -21,7 +21,7 @@ export default function ProjectSession() {
     const stop = startAutosave()
     return () => {
       // 离开工程页面：先把 pending 的改动落盘再退订，顺序不能反
-      void useEditor.getState().saveNow()
+      void useEditor.getState().saveNow().catch(() => undefined)
       stop()
     }
   }, [])

@@ -47,7 +47,7 @@ export default function Toolbar() {
         <div className="pointer-events-auto flex shrink-0 items-center gap-1">
           <Btn
             className={TOP_ACTION_BUTTON_CLS}
-            onClick={() => void saveNow(true)}
+            onClick={() => void saveNow(true).catch(() => undefined)}
             disabled={saving}
             title={copy.saveHint}
             variant="secondary"

@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 /**
- * lostCells 的自检：换板阵前的"会丢多少格"算错就等于悄悄丢内容。
+ * 网格、布局、导出和工程输入的自检：这些结果算错就等于悄悄丢内容。
  * `npm run check` 直接跑（Node 24 跑 TS，不装任何测试框架）。
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { zlibSync } from 'fflate'
+
+import { PALETTES } from '../../src/data/palettes.ts'
+import { DEFAULT_SETTINGS } from '../../src/conversion/settings.ts'
 
 import {
   boardGuide,
@@ -17,6 +22,13 @@ import { PT_PER_MM } from '../../src/domain/geometry.ts'
 import { paletteDisplayLabel } from '../../src/domain/palette.ts'
 import { paperLayout, planAnnotations } from '../../src/render/documentLayout.ts'
 import { exportFilename } from '../../src/render/download.ts'
+import { createPdfSink } from '../../src/render/pdf.ts'
+import {
+  createProject,
+  parseProject,
+  serializeProject,
+  validateProject,
+} from '../../src/domain/project.ts'
 
 /** 全板可用（placeable 省略）或按遮罩给 */
 function grid(cols: number, rows: number, placeable?: Uint8Array) {
@@ -125,6 +137,16 @@ assert.equal(exportFilename(1, '春日作品', '预览图', 'png'), '1.春日作
 assert.equal(exportFilename(2, '春日作品', '矢量版', 'pdf'), '2.春日作品（矢量版）.pdf')
 assert.equal(exportFilename(3, '春日作品', '打印版', 'pdf'), '3.春日作品（打印版）.pdf')
 
+// jsPDF receives user text raw; its own escaping must handle parentheses and backslashes once.
+{
+  const sink = createPdfSink({ widthPt: 100, heightPt: 100, cjkFontBase64: '', compress: false })
+  sink.text('a(b)\\c', 10, 10, 10, 'fill')
+  sink.text('a(b)\\c', 10, 30, 10, 'fillstroke')
+  sink.textBatch([{ text: 'a(b)\\c', x: 10, baselineY: 50 }], 10, [0, 0, 0], 'fill')
+  const content = new TextDecoder().decode(sink.output())
+  assert.equal(content.split('(a\\(b\\)\\\\c) Tj').length - 1, 3)
+}
+
 // 11. Vector usage-list labels use Chinese while codes and palette identifiers stay intact.
 const mardLabel = paletteDisplayLabel({
   brand: 'MARD',
@@ -210,4 +232,61 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
   assert.ok(Math.abs(lastPage.fragments[0].yPt - lastPage.fragments[1].yPt) >= 10 * PT_PER_MM)
 }
 
-console.log('网格 / 布局 / 迁移 / 导出自检通过')
+// 17-19. Project input validation rejects unknown palettes and coercible bad cell values,
+// while a normal compressed project still round-trips.
+{
+  const layout = { placements: [{ board: 'mini26' as const, col: 0, row: 0 }], gapMm: 0 }
+  const geometry = deriveLayoutGeometry(layout)
+  const project = createProject({
+    name: '括号(与反斜杠\\\\)',
+    layout,
+    paletteId: 'mard-221',
+    grid: grid(geometry.cols, geometry.rows, geometry.placeable),
+  })
+  const serialized = serializeProject(project)
+  const roundTrip = parseProject(serialized)
+  assert.ok(roundTrip.project)
+  assert.equal(roundTrip.project?.name, project.name)
+
+  const unknownPalette = JSON.parse(serialized) as Record<string, unknown>
+  unknownPalette.paletteId = 'not-a-real-palette'
+  assert.equal(validateProject(unknownPalette).project, null)
+
+  const badCells = JSON.parse(serialized) as { grid: { cols: number; rows: number; cells: unknown[] } }
+  badCells.grid = {
+    cols: geometry.cols,
+    rows: geometry.rows,
+    cells: Array.from({ length: geometry.cols * geometry.rows }, (_, i) => (i === 1 ? null : EMPTY)),
+  }
+  for (const value of [null, '1', -1, 1.5, 0x10000, NaN, Infinity, 221]) {
+    badCells.grid.cells[1] = value
+    assert.equal(validateProject(badCells).project, null)
+  }
+  const withConversion = { ...project, conversion: { ...DEFAULT_SETTINGS, strategyId: 'auto' as const, dither: 0.35 } }
+  assert.deepEqual(parseProject(serializeProject(withConversion)).project?.conversion, withConversion.conversion)
+  const badGap = { ...project, layout: { ...layout, gapMm: -1 } }
+  assert.equal(validateProject(badGap).project?.layout.gapMm, 0)
+
+  // A tiny zlib stream that inflates far past the declared grid must be rejected,
+  // and must not inflate past declared size + 1 byte while checking (decompression bomb guard).
+  const bomb = JSON.parse(serialized) as { grid: { data: string } }
+  bomb.grid.data = Buffer.from(zlibSync(new Uint8Array(8_000_000), { level: 9 })).toString('base64')
+  assert.equal(validateProject(bomb).project, null)
+}
+
+// 20. Malformed free-layout entries return a structured validation error instead of throwing.
+assert.deepEqual(
+  validateLayout({ placements: [null as never], gapMm: 0 }),
+  { kind: 'unknown-board', board: 'undefined' },
+)
+
+// Compact runtime data must keep every color index and RGB/Lab value identical to the source.
+const source = JSON.parse(readFileSync(new URL('../../src/data/palettes.json', import.meta.url), 'utf8'))
+assert.equal(PALETTES.length, source.palettes.length)
+for (const palette of PALETTES) {
+  const original = source.palettes.find((item: { id: string }) => item.id === palette.id)
+  const comparable = ({ code, name, hex, rgb, lab }: typeof palette.colors[number]) => ({ code, name, hex, rgb, lab })
+  assert.deepEqual(palette.colors.map(comparable), original.colors.map(comparable))
+}
+
+console.log('Grid, layout, project validation, conversion settings, PDF escaping and palette checks passed.')

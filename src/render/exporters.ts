@@ -30,12 +30,17 @@ export interface ScreenExportOptions {
   includeBom: boolean
 }
 
-export function buildScreenPdf(ctx: ExportContext, options: ScreenExportOptions): Uint8Array {
+async function createExportPdfSink(options: { widthPt: number; heightPt: number }) {
+  const { PINDOU_BOM_CJK_FONT_BASE64 } = await import('./fonts/pindouBomCjk.ts')
+  return createPdfSink({ ...options, cjkFontBase64: PINDOU_BOM_CJK_FONT_BASE64 })
+}
+
+export async function buildScreenPdf(ctx: ExportContext, options: ScreenExportOptions): Promise<Uint8Array> {
   const layout = screenLayout(ctx.grid, ctx.pitchMm, {
     showCodes: options.showCodes,
     includeBom: options.includeBom,
   })
-  const sink = createPdfSink({
+  const sink = await createExportPdfSink({
     widthPt: layout.pageMm.w * PT_PER_MM,
     heightPt: layout.pageMm.h * PT_PER_MM,
   })
@@ -61,7 +66,7 @@ export interface PaperExportOptions {
   instructions?: boolean
 }
 
-export function buildPaperPdf(ctx: ExportContext, options: PaperExportOptions): Uint8Array {
+export async function buildPaperPdf(ctx: ExportContext, options: PaperExportOptions): Promise<Uint8Array> {
   const renderOptions = {
     marginMm: options.marginMm,
     overlap: options.overlap,
@@ -70,7 +75,7 @@ export function buildPaperPdf(ctx: ExportContext, options: PaperExportOptions): 
     boards: options.boards,
   }
   const layout = paperLayout(ctx.grid, ctx.pitchMm, renderOptions)
-  const sink = createPdfSink({
+  const sink = await createExportPdfSink({
     widthPt: layout.pageMm.w * PT_PER_MM,
     heightPt: layout.pageMm.h * PT_PER_MM,
   })
@@ -91,9 +96,9 @@ export function buildPaperPdf(ctx: ExportContext, options: PaperExportOptions): 
  * 整图打印资料包：一份连续分页的 A4 PDF，加上用量清单和中文说明文本。
  * 旧版本这里按板拆 PDF；现在必须按整张板阵分页，避免每块板旁边留下大量空白。
  */
-export function buildPaperZip(ctx: ExportContext, options: PaperExportOptions = {}): Uint8Array {
+export async function buildPaperZip(ctx: ExportContext, options: PaperExportOptions = {}): Promise<Uint8Array> {
   const files: Record<string, Uint8Array> = {}
-  files['打印版.pdf'] = buildPaperPdf(ctx, {
+  files['打印版.pdf'] = await buildPaperPdf(ctx, {
     ...options,
     boards: undefined,
     showCodes: options.showCodes ?? true,
@@ -207,7 +212,7 @@ export async function buildPreviewPng(
     showCoords: options.showCoords,
     boards: ctx.geom.boards,
   })
-  if (canvas instanceof OffscreenCanvas) {
+  if (typeof OffscreenCanvas !== 'undefined' && canvas instanceof OffscreenCanvas) {
     const blob = await canvas.convertToBlob({ type: 'image/png' })
     return new Uint8Array(await blob.arrayBuffer())
   }
@@ -340,13 +345,13 @@ export async function buildExportBundle(
     })
   }
   if (selection.screen) {
-    files[exportFilename(2, base, '矢量版', 'pdf')] = buildScreenPdf(ctx, {
+    files[exportFilename(2, base, '矢量版', 'pdf')] = await buildScreenPdf(ctx, {
       showCodes: selection.screenCodes,
       includeBom: selection.screenBom,
     })
   }
   if (selection.paper && selection.paperScope !== 'zip') {
-    files[exportFilename(3, base, '打印版', 'pdf')] = buildPaperPdf(ctx, {
+    files[exportFilename(3, base, '打印版', 'pdf')] = await buildPaperPdf(ctx, {
       showCodes: selection.showCodes,
       overlap: selection.paperOverlap,
       includeBom: true,
@@ -358,7 +363,7 @@ export async function buildExportBundle(
     Object.assign(
       files,
       unzipSync(
-        buildPaperZip(ctx, {
+        await buildPaperZip(ctx, {
           showCodes: selection.showCodes,
           overlap: selection.paperOverlap,
         }),

@@ -1,10 +1,6 @@
 import { unzlibSync, zlibSync } from 'fflate'
 
-import {
-  DEFAULT_PALETTE_ID,
-  findPalette,
-  getPalette,
-} from '../data/palettes'
+import { findPalette, getPalette } from '../data/palettes.ts'
 import {
   deriveLayoutGeometry,
   describeLayoutError,
@@ -16,11 +12,11 @@ import {
   type BoardArray,
   type BoardGeometry,
   type BoardLayout,
-} from './board'
-import { EMPTY, type CellGrid } from './grid'
-import type { ConversionSettings } from '../conversion/convert'
-import { DEFAULT_SETTINGS } from '../conversion/convert'
-import { STRATEGIES } from '../conversion/strategies'
+} from './board.ts'
+import { EMPTY, type CellGrid } from './grid.ts'
+import type { ConversionSettings } from '../conversion/convert.ts'
+import { DEFAULT_SETTINGS } from '../conversion/settings.ts'
+import { STRATEGIES } from '../conversion/strategies.ts'
 
 /** 工程文件必须带 schemaVersion 和迁移函数（第 3.3 节） */
 export const PROJECT_SCHEMA_VERSION = 1
@@ -167,8 +163,16 @@ function isIsoDate(value: unknown): value is string {
 /** IndexedDB 里格子就是 Uint16Array；写成普通数组也认，坏数据不认 */
 function plainCells(value: unknown): Uint16Array {
   if (value instanceof Uint16Array) return value.slice()
-  if (Array.isArray(value)) return Uint16Array.from(value as number[])
-  throw new Error('格子数据不是数组')
+  if (!Array.isArray(value)) throw new Error('格子数据不是数组')
+  const cells = new Uint16Array(value.length)
+  for (let i = 0; i < value.length; i++) {
+    const cell = value[i]
+    if (!Number.isInteger(cell) || cell < 0 || cell > 0xffff) {
+      throw new Error(`第 ${i} 格不是合法的色号索引`)
+    }
+    cells[i] = cell
+  }
+  return cells
 }
 
 /** 多条“已经替你修好了”的提示拼成一条 —— 界面只有一个位置放它 */
@@ -211,7 +215,7 @@ function readConversion(raw: unknown, notes: string[]): ConversionSettings | nul
     return null
   }
   const value = raw as Partial<ConversionSettings>
-  if (!Object.prototype.hasOwnProperty.call(STRATEGIES, String(value.strategyId))) {
+  if (value.strategyId !== 'auto' && !Object.prototype.hasOwnProperty.call(STRATEGIES, String(value.strategyId))) {
     notes.push(`转换策略“${String(value.strategyId)}”不存在，已重置转换参数`)
     return null
   }
@@ -220,7 +224,7 @@ function readConversion(raw: unknown, notes: string[]): ConversionSettings | nul
   return {
     strategyId: value.strategyId as ConversionSettings['strategyId'],
     maxColors: count(value.maxColors, DEFAULT_SETTINGS.maxColors),
-    dither: value.dither === null || value.dither === undefined ? null : count(value.dither, 0),
+    dither: value.dither === null || value.dither === undefined ? null : Math.max(0, finiteOr(value.dither, 0)),
     cropToSubject: value.cropToSubject !== false,
     removeBackground: value.removeBackground === true,
     clearExisting: value.clearExisting !== false,
@@ -231,18 +235,15 @@ function readConversion(raw: unknown, notes: string[]): ConversionSettings | nul
 /**
  * 读：校验 schemaVersion → 迁移 → 校验格数 / 数组长度 / 色号。
  * 任一项不通过就明确报错，不静默修复（第 14.3 节）。
- *
- * @param paletteSize 当前色板的颜色数。给了就校验格子里的索引没越界
- *                    （坏文件最典型的两种：格数超上限、引用了不存在的色号）
  */
-export function parseProject(text: string, paletteSize?: number): ParseResult {
+export function parseProject(text: string): ParseResult {
   let raw: unknown
   try {
     raw = JSON.parse(text)
   } catch {
     return { project: null, error: { kind: 'fatal', message: '文件不是合法的 JSON' } }
   }
-  return validateProject(raw, paletteSize)
+  return validateProject(raw)
 }
 
 /**
@@ -252,7 +253,7 @@ export function parseProject(text: string, paletteSize?: number): ParseResult {
  * 可修的字段（时间戳 / 视图 / 越界白名单 / 空档脏数据）就地修好，
  * 并在 error.message 里说清楚改了什么。
  */
-export function validateProject(raw: unknown, paletteSize?: number): ParseResult {
+export function validateProject(raw: unknown): ParseResult {
   if (!raw || typeof raw !== 'object') {
     return { project: null, error: { kind: 'fatal', message: '文件内容不是一个工程对象' } }
   }
@@ -313,19 +314,20 @@ export function validateProject(raw: unknown, paletteSize?: number): ParseResult
   let restored: CellGrid
   try {
     if (typeof grid.data === 'string') {
-      // 工程文件：zlib + base64
-      const bytes = unzlibSync(fromBase64(grid.data))
-      if (bytes.byteLength !== cells * 2) {
+      // 工程文件：zlib + base64。给一个只比预期多 1 字节的输出缓冲：
+      // 解压炸弹最多只能撑到 expected + 1，多出来的那一格让长度检查把文件挡回去。
+      const expected = cells * 2
+      const bytes = unzlibSync(fromBase64(grid.data), { out: new Uint8Array(expected + 1) })
+      if (bytes.length !== expected) {
         return {
           project: null,
           error: {
             kind: 'fatal',
-            message: `格子数据长度不对：期望 ${cells * 2} 字节，实际 ${bytes.byteLength} 字节`,
+            message: `格子数据长度不对：期望 ${expected} 字节，实际 ${bytes.length} 字节`,
           },
         }
       }
-      const owned = bytes.slice().buffer
-      restored = { cols: grid.cols, rows: grid.rows, cells: new Uint16Array(owned) }
+      restored = { cols: grid.cols, rows: grid.rows, cells: new Uint16Array(bytes.buffer, bytes.byteOffset, cells) }
     } else {
       // IndexedDB：已经没有压缩这一层，直接拿数组
       restored = { cols: grid.cols, rows: grid.rows, cells: plainCells(grid.cells) }
@@ -368,6 +370,11 @@ export function validateProject(raw: unknown, paletteSize?: number): ParseResult
       error: { kind: 'fatal', message: `板阵非法：${describeLayoutError(invalidLayout)}` },
     }
   }
+  const rawGap = (layout as Partial<BoardLayout>).gapMm
+  const gapMm =
+    typeof rawGap === 'number' && Number.isFinite(rawGap) && rawGap >= 0 ? rawGap : 0
+  if (rawGap !== undefined && gapMm !== rawGap) notes.push('板缝数值不规范，已改成 0')
+  layout = { ...layout, gapMm }
   let geometry: BoardGeometry
   try {
     geometry = deriveLayoutGeometry(layout)
@@ -399,15 +406,15 @@ export function validateProject(raw: unknown, paletteSize?: number): ParseResult
     return { project: null, error: { kind: 'fatal', message: '工程没写色板 id' } }
   }
   const palette = findPalette(stored.paletteId)
-  let paletteId = stored.paletteId
   if (!palette) {
-    // 不静默回退：换个色板，色号会全部对不上，必须让用户看见
-    paletteId = DEFAULT_PALETTE_ID
-    notes.push(
-      `找不到色板 ${stored.paletteId}，已临时改用 ${getPalette(DEFAULT_PALETTE_ID).displayName}`,
-    )
+    // 不静默回退：换个色板，色号会全部对不上，必须拒绝这份工程。
+    return {
+      project: null,
+      error: { kind: 'fatal', message: `找不到色板：${stored.paletteId}` },
+    }
   }
-  const size = paletteSize && paletteSize > 0 ? paletteSize : (palette?.colors.length ?? 0)
+  const paletteId = palette.id
+  const size = palette.colors.length
   if (size > 0) {
     for (let i = 0; i < restored.cells.length; i++) {
       const value = restored.cells[i]
@@ -452,8 +459,12 @@ export function cryptoId(): string {
  * 和工程文件走同一套校验，别让坏数据绕过导入那条路直接进运行时。
  */
 export function decodeStoredProject(value: unknown): Project | null {
-  const result = validateProject(value)
-  return result.project
+  try {
+    const result = validateProject(value)
+    return result.project
+  } catch {
+    return null
+  }
 }
 
 export function createProject(options: {
@@ -489,7 +500,15 @@ export function createProject(options: {
 }
 
 /** 缩略图从 grid 生成，不需要重算（第 14.2 节） */
-export function projectSummary(project: Project) {
+export interface ProjectSummary {
+  cells: number
+  beads: number
+  colorCount: number
+  boardCount: number
+  sizeMm: { w: number; h: number }
+}
+
+export function projectSummary(project: Project): ProjectSummary {
   let used = 0
   const codes = new Set<number>()
   const placeable = project.grid.placeable

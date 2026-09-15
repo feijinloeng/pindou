@@ -1,8 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { useEditor } from '../editor/store'
 import { t } from '../i18n/zh'
-import { putProject } from '../storage/db'
 import { Btn, Field, INPUT_CLS, Modal } from './ui'
 
 /**
@@ -19,27 +18,36 @@ export default function NewProjectDialog({
   const copy = t('library')
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  const close = () => { if (!busyRef.current) onClose() }
 
   const create = async () => {
-    if (busy) return
+    if (busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     try {
+      useEditor.getState().pointerUp()
       const editor = useEditor.getState()
-      // 旧工程先落盘，别让上一个作品的 pending 改动被新工程盖掉
       await editor.saveNow()
+      const current = useEditor.getState()
+      if (current.projectId !== editor.projectId || current.commitVersion !== editor.commitVersion) {
+        throw new Error(t('storage').changedDuringOperation)
+      }
       editor.newProject(name.trim() || copy.untitled)
-      await putProject(useEditor.getState().toProject())
+      // 新工程也走 Store 的正式保存，保存状态与导出权限保持同步。
+      await useEditor.getState().saveNow(true)
       setName('')
       onClose()
     } catch (cause) {
       window.alert(`${copy.writeFailed}：${cause instanceof Error ? cause.message : String(cause)}`)
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={copy.newDialogTitle}>
+    <Modal open={open} onClose={close} title={copy.newDialogTitle} dismissable={!busy}>
       <form
         className="flex flex-col gap-3"
         onSubmit={(e) => {
@@ -56,7 +64,7 @@ export default function NewProjectDialog({
           />
         </Field>
         <div className="flex justify-end gap-2">
-          <Btn onClick={onClose}>{copy.cancel}</Btn>
+          <Btn onClick={close} disabled={busy}>{copy.cancel}</Btn>
           <Btn type="submit" variant="primary" disabled={busy}>
             {copy.create}
           </Btn>

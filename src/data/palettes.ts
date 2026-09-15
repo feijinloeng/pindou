@@ -1,25 +1,38 @@
-import raw from './palettes.json'
+import raw from './palettes.runtime.json' with { type: 'json' }
 
-import type { Palette } from '../domain/palette'
-import type { Rgb } from '../conversion/colorDistance'
+import type { Palette } from '../domain/palette.ts'
+import { hexToRgb } from '../domain/palette.ts'
+import type { Rgb } from '../conversion/colorDistance.ts'
 
 /**
- * 构建产物（`scripts/data/build-palettes.ts` 生成）的读取与索引。
+ * 运行时色板是构建脚本生成的紧凑数组，不把来源说明和未使用的 symbol 打进首屏。
  * 运行时不发任何网络请求 —— 离线可用（第 1 节决策 22）。
  */
+type CompactColor = [code: string, name: string, hex: string, lab: [number, number, number]]
 interface PaletteFile {
-  schema: string
-  schemaVersion: number
-  note: string
-  attribution: Array<{ repo: string; license: string; used: string }>
-  disclaimer: string
-  trademarks: string
-  palettes: Palette[]
+  palettes: Array<{
+    id: string
+    brand: string
+    displayName: string
+    pitchMm: 2.6 | 5
+    beadMm: number
+    colors: CompactColor[]
+  }>
 }
 
 const PALETTE_FILE = raw as unknown as PaletteFile
 const PALETTE_PRIORITY = ['mard-221', 'mard-291']
-export const PALETTES: Palette[] = PALETTE_FILE.palettes
+export const PALETTES: Palette[] = PALETTE_FILE.palettes.map((palette) => ({
+  ...palette,
+  colors: palette.colors.map(([code, name, hex, lab]) => ({
+    code,
+    name,
+    hex,
+    rgb: hexToRgb(hex),
+    lab,
+    symbol: null,
+  })),
+}))
   .map((palette, index) => ({ palette, index }))
   .sort((a, b) => {
     const aPriority = PALETTE_PRIORITY.indexOf(a.palette.id)

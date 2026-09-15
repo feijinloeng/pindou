@@ -8,7 +8,7 @@ export function startAutosave(debounceMs = 2000): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null
 
   // 重入由 store 的保存队列负责：这里的 flush 是"排一次队"，不会丢
-  const flush = () => void useEditor.getState().saveNow()
+  const flush = () => void useEditor.getState().saveNow().catch(() => undefined)
 
   const schedule = (immediate: boolean) => {
     if (timer) clearTimeout(timer)
@@ -17,9 +17,14 @@ export function startAutosave(debounceMs = 2000): () => void {
   }
 
   const unsubscribe = useEditor.subscribe((state, previous) => {
+    // 换工程时不要把新工程的空白状态误写成旧工程的自动保存。
+    if (state.projectId !== previous.projectId) {
+      if (timer) clearTimeout(timer)
+      timer = null
+      return
+    }
     if (state.commitVersion !== previous.commitVersion) schedule(false)
-    if (state.projectId !== previous.projectId) return
-    // 名字是"立刻写"的：不要让重命名在 debounce 窗口里丢掉
+    // 名字是“立刻写”的：不要让重命名在 debounce 窗口里丢掉
     if (state.name !== previous.name) schedule(true)
   })
 

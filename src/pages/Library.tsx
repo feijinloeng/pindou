@@ -5,25 +5,24 @@ import { getPalette } from '../data/palettes'
 import { deriveLayoutGeometry } from '../domain/board'
 import {
   createProject,
+  cryptoId,
   normalizeGridForLayout,
   parseProject,
-  projectSummary,
   serializeProject,
-  type Project,
 } from '../domain/project'
 import { useEditor } from '../editor/store'
 import { gsap, MOTION, reducedMotion } from '../motion'
 import { downloadBytes, safeName } from '../render/download'
 import { renderThumbnailDataUrl } from '../render/thumbnail'
 import {
-  clearDraft,
-  getDraft,
+  get,
+  getLatestProject,
+  getProject,
   listProjectEntries,
-  purgeProject,
   putProject,
   restoreProject,
-  trashProject,
   type LibraryEntry,
+  type ProjectIndex,
 } from '../storage/db'
 import { t } from '../i18n/zh'
 import NewProjectDialog from '../components/NewProjectDialog'
@@ -31,6 +30,17 @@ import { Btn, Menu, MenuItem, Modal } from '../components/ui'
 
 type Tab = 'projects' | 'trash'
 const TRASH_PREFIX = '[已删除] '
+
+async function loadActionProject(id: string) {
+  const editor = useEditor.getState()
+  if (editor.projectId === id) {
+    editor.pointerUp()
+    return editor.toProject()
+  }
+  const latest = await getLatestProject(id)
+  if (!latest) throw new Error(t('storage').missingProject)
+  return latest.project
+}
 
 export default function Library({
   embedded = false,
@@ -42,12 +52,13 @@ export default function Library({
   const [entries, setEntries] = useState<LibraryEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [issues, setIssues] = useState<string[]>([])
   const [query, setQuery] = useState('')
   const [tab, setTab] = useState<Tab>('projects')
   const [newOpen, setNewOpen] = useState(false)
-  const [details, setDetails] = useState<Project | null>(null)
+  const [details, setDetails] = useState<ProjectIndex | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const copy = t('library')
 
@@ -66,39 +77,48 @@ export default function Library({
 
   useEffect(() => {
     void refresh()
+    return useEditor.subscribe((state, previous) => {
+      if (state.savedAt !== previous.savedAt) void refresh()
+    })
   }, [refresh])
 
   /** 所有写盘操作都从这过：busy 挡住重复点击，失败一定在界面上说清楚 */
   const runWrite = async (action: () => Promise<void>) => {
+    if (busyRef.current) return
+    busyRef.current = true
     setBusy(true)
+    setError(null)
     try {
       await action()
-      setError(null)
     } catch (cause) {
-      setError(`${copy.writeFailed}：${message(cause)}`)
+      setError(`${copy.actionFailed}：${message(cause)}`)
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
 
-  const openProject = async (id: string) => {
-    try {
-      // 优先打开草稿（可能比正式保存的更新）
-      const entry = entries.find((e) => e.project.id === id)
-      const draft = entry?.hasNewerDraft ? await getDraft(id) : undefined
-      const target = draft ?? entry?.project
-      if (!target) return
-      // 草稿比正式工程新 = 这份内容还没经过一次正式保存，导出前要先保存
-      useEditor.getState().loadProject(target, !entry?.hasNewerDraft)
-      setError(null)
+  const openProject = (id: string) => runWrite(async () => {
+    useEditor.getState().pointerUp()
+    const editor = useEditor.getState()
+    if (editor.projectId === id) {
       onClose?.()
-    } catch (cause) {
-      setError(`打开失败：${message(cause)}`)
+      return
     }
-  }
+    await editor.saveNow()
+    const loaded = await getLatestProject(id)
+    if (!loaded) throw new Error(t('storage').missingProject)
+    const current = useEditor.getState()
+    if (current.projectId !== editor.projectId || current.commitVersion !== editor.commitVersion) {
+      throw new Error(t('storage').changedDuringOperation)
+    }
+    current.loadProject(loaded.project, !loaded.hasNewerDraft)
+    onClose?.()
+  })
 
-  const duplicate = (project: Project) =>
+  const duplicate = (entry: LibraryEntry) =>
     runWrite(async () => {
+      const project = await loadActionProject(entry.project.id)
       const clone = createProject({
         name: `${cleanName(project.name)} 副本`,
         layout: project.layout,
@@ -115,52 +135,59 @@ export default function Library({
       await refresh()
     })
 
-  const rename = (project: Project) =>
+  const rename = (entry: LibraryEntry) =>
     runWrite(async () => {
-      const next = window.prompt(copy.renamePrompt, cleanName(project.name))
+      const next = window.prompt(copy.renamePrompt, cleanName(entry.project.name))?.trim()
       if (!next) return
-      await putProject({ ...project, name: next, updatedAt: new Date().toISOString() })
-      await refresh()
-    })
-
-  const remove = (project: Project) =>
-    runWrite(async () => {
-      await trashProject(project.id)
-      await clearDraft(project.id)
-      await refresh()
-    })
-
-  const restore = (project: Project) =>
-    runWrite(async () => {
-      await restoreProject(project.id)
-      await refresh()
-    })
-
-  const exportProject = (project: Project) => {
-    const text = serializeProject(project)
-    downloadBytes(
-      new TextEncoder().encode(text),
-      `${safeName(cleanName(project.name))}.pindou.json`,
-      'application/json',
-    )
-  }
-
-  const importProject = async (file: File) => {
-    try {
-      const text = await file.text()
-      // 色板大小不再由调用方猜：validateProject 自己会查色板 id
-      const result = parseProject(text)
-      if (!result.project) {
-        window.alert(`${copy.importFailed}\n${result.error?.message ?? ''}`)
-        return
+      const id = entry.project.id
+      const editor = useEditor.getState()
+      if (editor.projectId === id) {
+        // 当前工程直接通过 Store 保存，避免把编辑器里的最新网格换回旧索引。
+        useEditor.setState((state) => ({ name: next, commitVersion: state.commitVersion + 1 }))
+        await useEditor.getState().saveNow(true)
+      } else {
+        const project = await loadActionProject(id)
+        await putProject({ ...project, name: next, updatedAt: new Date().toISOString() })
       }
-      await putProject(result.project)
       await refresh()
-      if (result.error) window.alert(result.error.message)
-    } catch (cause) {
-      setError(`${copy.importFailed}：${message(cause)}`)
+    })
+
+  const remove = (entry: LibraryEntry) =>
+    runWrite(async () => {
+      await useEditor.getState().deleteProject(entry.project.id)
+      await refresh()
+    })
+
+  const restore = (entry: LibraryEntry) =>
+    runWrite(async () => {
+      await restoreProject(entry.project.id)
+      await refresh()
+    })
+
+  const exportProject = (entry: LibraryEntry) =>
+    runWrite(async () => {
+      const project = await loadActionProject(entry.project.id)
+      const text = serializeProject(project)
+      downloadBytes(
+        new TextEncoder().encode(text),
+        `${safeName(cleanName(project.name))}.pindou.json`,
+        'application/json',
+      )
+    })
+
+  const importProject = (file: File) => runWrite(async () => {
+    const result = parseProject(await file.text())
+    if (!result.project) throw new Error(`${copy.importFailed}：${result.error?.message ?? ''}`)
+    let project = result.project
+    // Import collisions become separate copies, never overwrite local edits or trash.
+    const existing = await Promise.all([get('projects', project.id), get('drafts', project.id)])
+    if (existing.some(Boolean) || useEditor.getState().projectId === project.id) {
+      project = { ...project, id: cryptoId(), name: `${cleanName(project.name)} ${copy.importedCopy}` }
     }
-  }
+    await putProject(project)
+    await refresh()
+    if (result.error) window.alert(result.error.message)
+  })
 
   // 本地搜索 + 按更新时间排序 + 作品/回收站分栏。都不改写盘数据。
   const shown = useMemo(() => {
@@ -178,11 +205,7 @@ export default function Library({
       .sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
   }, [entries, query, tab])
 
-  const cardEntries = embedded
-    ? entries
-        .filter((entry) => !entry.project.name.startsWith(TRASH_PREFIX))
-        .sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
-    : shown
+  const cardEntries = shown
 
   // 只给前 8 张卡片播入场（spec 12.2：不为一屏之外的卡片付动画钱）。
   // 依赖长度而不是数组本身：重命名也会 refresh，不该因此重播一次入场。
@@ -212,6 +235,17 @@ export default function Library({
           : 'mx-auto flex h-full w-full max-w-[1088px] flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6'
       }
     >
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          if (file) void importProject(file)
+          event.target.value = ''
+        }}
+      />
       {!embedded && (
         <>
       <div className="flex flex-wrap items-end gap-2">
@@ -227,17 +261,6 @@ export default function Library({
           <Btn onClick={() => fileRef.current?.click()} disabled={busy}>
             {copy.import}
           </Btn>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void importProject(file)
-              e.target.value = ''
-            }}
-          />
         </div>
       </div>
 
@@ -291,26 +314,6 @@ export default function Library({
         <span className="ml-auto text-xs text-ink-2">{copy.sortUpdated} ↓</span>
       </div>
 
-      {error && (
-        <p
-          role="alert"
-          className="flex flex-wrap items-center gap-2 rounded-xl border border-danger/40 bg-surface p-3 text-sm text-danger"
-        >
-          {error}
-          <Btn onClick={() => void refresh()}>{copy.retry}</Btn>
-        </p>
-      )}
-
-      {issues.length > 0 && (
-        <ul role="status" className="rounded-xl border border-warn-ink/30 bg-warn-bg p-3 text-sm text-warn-ink">
-          {issues.map((issue) => (
-            <li key={issue}>{issue}</li>
-          ))}
-        </ul>
-      )}
-
-      {loading && <p className="text-sm text-ink-2">{copy.loading}</p>}
-
       {!loading && !error && shown.length === 0 && (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
           {query ? (
@@ -337,6 +340,29 @@ export default function Library({
         </>
       )}
 
+      {embedded && (
+        <div className="flex gap-1" role="group" aria-label={copy.title}>
+          <Btn active={tab === 'projects'} onClick={() => setTab('projects')}>{copy.tabProjects}</Btn>
+          <Btn active={tab === 'trash'} onClick={() => setTab('trash')}>{copy.tabTrash}</Btn>
+          <Btn onClick={() => fileRef.current?.click()} disabled={busy}>{copy.import}</Btn>
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-danger/40 p-3 text-sm text-danger">
+          <span>{error}</span>
+          <Btn onClick={() => void refresh()} disabled={busy}>{copy.retry}</Btn>
+        </div>
+      )}
+      {issues.length > 0 && (
+        <ul role="status" className="rounded-xl border border-warn-ink/30 bg-warn-bg p-3 text-sm text-warn-ink">
+          {issues.map((issue) => <li key={issue}>{issue}</li>)}
+        </ul>
+      )}
+      {loading && <p className="text-sm text-ink-2">{copy.loading}</p>}
+      {embedded && tab === 'trash' && !loading && !error && shown.length === 0 && (
+        <p className="p-2 text-sm text-ink-2">{copy.emptyTrash}</p>
+      )}
+
       <div
         ref={gridRef}
         className={embedded ? 'flex w-full flex-wrap gap-2' : 'grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'}
@@ -348,19 +374,19 @@ export default function Library({
             embedded={embedded}
             busy={busy}
             onOpen={() => void openProject(entry.project.id)}
-            onDuplicate={() => void duplicate(entry.project)}
-            onRename={() => void rename(entry.project)}
-            onDelete={() => void remove(entry.project)}
-            onRestore={() => void restore(entry.project)}
+            onDuplicate={() => void duplicate(entry)}
+            onRename={() => void rename(entry)}
+            onDelete={() => void remove(entry)}
+            onRestore={() => void restore(entry)}
             onPurge={() => {
               if (window.confirm(copy.purgeConfirm)) {
                 void runWrite(async () => {
-                  await purgeProject(entry.project.id)
+                  await useEditor.getState().deleteProject(entry.project.id, true)
                   await refresh()
                 })
               }
             }}
-            onExport={() => exportProject(entry.project)}
+            onExport={() => void exportProject(entry)}
             onDetails={() => setDetails(entry.project)}
           />
         ))}
@@ -404,27 +430,59 @@ function ProjectCard({
 }) {
   const project = entry.project
   const [thumb, setThumb] = useState<string | null>(null)
+  const cardRef = useRef<HTMLElement>(null)
   const deleted = project.name.startsWith(TRASH_PREFIX)
   const copy = t('library')
-  // 摘要要扫完整张画布，几百个 130 万格工程不能每次渲染都算
-  const summary = useMemo(() => projectSummary(project), [project])
+  const summary = project.summary
 
   useEffect(() => {
-    // 缩略图也是整幅扫描：先让卡片画出来，空闲时再逐张补图
-    return onIdle(() =>
-      setThumb(
-        renderThumbnailDataUrl(
-          project.grid,
-          getPalette(project.paletteId),
-          160,
-          deriveLayoutGeometry(project.layout).boards,
-        ),
-      ),
-    )
-  }, [project])
+    // 只有卡片进入视口后才读完整网格和生成缩略图。
+    let cancelled = false
+    let cancelIdle: (() => void) | undefined
+    const load = () => {
+      const source = entry.hasNewerDraft
+        ? getLatestProject(project.id)
+        : getProject(project.id).then((full) => (full ? { project: full } : getLatestProject(project.id)))
+      void source
+        .then((loaded) => {
+          if (cancelled || !loaded) return
+          const full = loaded.project
+          setThumb(
+            renderThumbnailDataUrl(
+              full.grid,
+              getPalette(full.paletteId),
+              160,
+              deriveLayoutGeometry(full.layout).boards,
+            ),
+          )
+        })
+        .catch(() => undefined)
+    }
+    const el = cardRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      cancelIdle = onIdle(load)
+      return () => {
+        cancelled = true
+        cancelIdle?.()
+      }
+    }
+    const observer = new IntersectionObserver((observations) => {
+      if (!observations.some((observation) => observation.isIntersecting)) return
+      observer.disconnect()
+      cancelIdle = onIdle(load)
+    })
+    observer.observe(el)
+    return () => {
+      cancelled = true
+      observer.disconnect()
+      cancelIdle?.()
+    }
+  }, [project.id, project.updatedAt, entry.hasNewerDraft])
 
   return (
     <article
+      ref={cardRef}
+      inert={busy}
       className={`${embedded ? 'w-[min(82vw,300px)]' : ''} relative flex flex-col rounded-xl border bg-surface ${
         deleted ? 'border-dashed border-line' : 'border-line'
       }`}
@@ -432,7 +490,7 @@ function ProjectCard({
       <button
         type="button"
         onClick={onOpen}
-        disabled={busy}
+        disabled={busy || deleted}
         aria-label={`${copy.open}《${cleanName(project.name)}》`}
         className="group block overflow-hidden rounded-xl text-left"
       >
@@ -550,9 +608,9 @@ function ProjectCard({
 }
 
 /** 项目详情：所有摘要值都在这，卡片上不用堆数字 */
-function ProjectDetails({ project, onClose }: { project: Project | null; onClose: () => void }) {
+function ProjectDetails({ project, onClose }: { project: ProjectIndex | null; onClose: () => void }) {
   const copy = t('library')
-  const summary = useMemo(() => (project ? projectSummary(project) : null), [project])
+  const summary = project?.summary
   if (!project || !summary) return null
   const rows: Array<[string, string]> = [
     [copy.namePlaceholder, cleanName(project.name)],

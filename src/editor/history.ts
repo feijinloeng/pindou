@@ -159,21 +159,8 @@ export class History {
     return this.redoStack.length > 0
   }
 
-  get undoLabel(): string | null {
-    return this.undoStack.at(-1)?.label ?? null
-  }
-
   clear(): void {
     this.undoStack.length = 0
     this.redoStack.length = 0
-  }
-
-  /** 撤销栈占的内存，用来盯住"50 步 < 100 MB"这条验收 */
-  memoryBytes(): number {
-    let n = 0
-    for (const p of this.undoStack) {
-      n += p.indexes.byteLength + p.before.byteLength + p.after.byteLength
-    }
-    return n
   }
 }

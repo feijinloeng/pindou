@@ -75,21 +75,6 @@ export function fillSelection(
   return n
 }
 
-/**
- * 反选：只支持单选区，补集就是四条边。
- * ponytail: 多矩形选区不做真正的布尔差；要精确的并集反选时再上扫描线。
- */
-export function invertSelection(sel: Selection, cols: number, rows: number): Selection {
-  const box = selectionBBox(sel)
-  if (sel.length !== 1 || !box) return sel
-  const out: Selection = []
-  if (box.r0 > 0) out.push({ c0: 0, r0: 0, c1: cols - 1, r1: box.r0 - 1 })
-  if (box.r1 < rows - 1) out.push({ c0: 0, r0: box.r1 + 1, c1: cols - 1, r1: rows - 1 })
-  if (box.c0 > 0) out.push({ c0: 0, r0: box.r0, c1: box.c0 - 1, r1: box.r1 })
-  if (box.c1 < cols - 1) out.push({ c0: box.c1 + 1, r0: box.r0, c1: cols - 1, r1: box.r1 })
-  return out
-}
-
 export interface Clip {
   cols: number
   rows: number
