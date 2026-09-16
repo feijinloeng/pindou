@@ -132,6 +132,7 @@ export interface EditorState {
   setColor(index: number): void
   setSelectedBoard(board: BoardTypeId): void
   setPalette(id: string): void
+  setConversion(patch: Partial<ConversionSettings>): void
   setVp(vp: Viewport): void
   fitTo(width: number, height: number, dpr?: number): void
   /** 画布旁开着哪个临时面板（纯界面状态，不进工程文件） */
@@ -648,6 +649,14 @@ export const useEditor = create<EditorState>((set, get) => ({
     commitRecording(set, get, `换到 ${next.displayName}`, { before, after: metaSnapshot(get()) })
   },
 
+  setConversion(patch) {
+    invalidateConversion()
+    set({
+      conversion: { ...get().conversion, ...patch },
+      converting: false,
+      progress: null,
+    })
+  },
   setVp(vp) {
     set({ vp })
   },
@@ -878,7 +887,7 @@ export const useEditor = create<EditorState>((set, get) => ({
           putImage(id, { name: file.name, blob: cached.blob, width: cached.width, height: cached.height }),
         )
         .catch(() => undefined)
-      // Convert immediately with the fixed defaults; no parameter form is required.
+      // 先用默认参数生成一次，之后可在图片面板继续调整。
       void get().runConvert()
     } catch (error) {
       if (generation !== conversionGeneration) return
@@ -977,8 +986,8 @@ export const useEditor = create<EditorState>((set, get) => ({
         commitVersion: current.commitVersion + 1,
         converting: false,
         progress: null,
-        // 应用完收起图片面板，把画布还回去；想再调从菜单里重新打开
-        panel: null,
+        // 转换完成后保留图片面板，方便继续调大小、位置和透明边缘
+        panel: 'image',
         notice: recorder.overflowed
           ? '转换完成。改动太大，这一步不计入撤销历史'
           : result.cropSkipped

@@ -10,7 +10,14 @@ import {
 } from './background'
 import { mergeSmallComponents, majorityFilter } from './cleanup'
 import type { PaletteLabEntry, Rgb } from './colorDistance'
-import { cropRect, downscale, downscaleContained, fitToAspect, type FitMode } from './downscale'
+import {
+  cropRect,
+  downscale,
+  downscaleContained,
+  downscalePositioned,
+  fitToAspect,
+  type FitMode,
+} from './downscale'
 import { limitColors } from './limitColors'
 import { createMatcher, matchWithDither } from './match'
 import { bilateralFilter, luminanceOf, neutralBias } from './preprocess'
@@ -28,6 +35,13 @@ export interface ConversionSettings {
   removeBackground: boolean
   clearExisting: boolean
   fit: FitMode
+  /** 相对默认铺放尺寸的统一缩放；1 = 默认大小 */
+  scale: number
+  /** 相对画布宽高的位移比例；0 = 居中 */
+  offsetX: number
+  offsetY: number
+  /** 边缘背景被判为空格的相似色阈值 */
+  backgroundThreshold: number
 }
 
 interface ConvertInput {
@@ -85,8 +99,11 @@ export function convert(input: ConvertInput): ConvertResult {
   let backgroundConfidence = 0
   let cropped = false
   let cropSkipped = false
+  const backgroundThreshold = Number.isFinite(settings.backgroundThreshold)
+    ? Math.max(0, Math.min(100, settings.backgroundThreshold))
+    : BG_THRESHOLD
   if (settings.cropToSubject || settings.removeBackground) {
-    const sample = sampleBackground(image)
+    const sample = sampleBackground(image, 0.02, backgroundThreshold)
     backgroundRgb = sample.rgb
     backgroundConfidence = sample.confidence
   }
@@ -95,7 +112,7 @@ export function convert(input: ConvertInput): ConvertResult {
     if (backgroundConfidence < MIN_BG_CONFIDENCE) {
       cropSkipped = true
     } else {
-      const box = findSubjectBox(image, backgroundRgb, BG_THRESHOLD)
+      const box = findSubjectBox(image, backgroundRgb, backgroundThreshold)
       if (box && shouldCrop(box, image.width, image.height)) {
         const w = box.x1 - box.x0 + 1
         const h = box.y1 - box.y0 + 1
@@ -106,8 +123,19 @@ export function convert(input: ConvertInput): ConvertResult {
   }
 
   report('降采样', 0.25)
-  const small =
-    settings.fit === 'contain'
+  const hasPlacement = settings.scale !== 1 || settings.offsetX !== 0 || settings.offsetY !== 0
+  const small = hasPlacement
+    ? downscalePositioned(
+        image,
+        cols,
+        rows,
+        settings.fit,
+        settings.scale,
+        settings.offsetX,
+        settings.offsetY,
+        strategy.downscale,
+      )
+    : settings.fit === 'contain'
       ? downscaleContained(image, cols, rows)
       : downscale(fitToAspect(image, cols, rows, settings.fit), cols, rows, strategy.downscale)
 
@@ -160,7 +188,7 @@ export function convert(input: ConvertInput): ConvertResult {
 
   report('去背景', 0.92)
   if (settings.removeBackground && backgroundRgb) {
-    removeBackground(cells, cols, rows, paletteColors, backgroundRgb, BG_THRESHOLD)
+    removeBackground(cells, cols, rows, paletteColors, backgroundRgb, backgroundThreshold)
   }
 
   // 保留底图时，把空格处填回底图内容

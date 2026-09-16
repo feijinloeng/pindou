@@ -23,7 +23,11 @@ export interface BackgroundSample {
  * 比只看四角稳得多：主体压在角落里时四角中位数会被主体带偏，
  * 而一整条边线上背景仍然占多数，中位数还是背景色。
  */
-export function sampleBackground(image: SourceImage, bandRatio = 0.02): BackgroundSample {
+export function sampleBackground(
+  image: SourceImage,
+  bandRatio = 0.02,
+  threshold = BG_THRESHOLD,
+): BackgroundSample {
   const { width, height, data } = image
   const bw = Math.max(1, Math.round(width * bandRatio))
   const bh = Math.max(1, Math.round(height * bandRatio))
@@ -49,7 +53,7 @@ export function sampleBackground(image: SourceImage, bandRatio = 0.02): Backgrou
   const rgb: Rgb = [median(samples[0]), median(samples[1]), median(samples[2])]
 
   // 一致度用平方距离比，不开根号：只是拿来做阈值判断
-  const tolerance = (BG_THRESHOLD * 1.6) ** 2
+  const tolerance = (threshold * 1.6) ** 2
   let agree = 0
   const total = samples[0].length
   for (let i = 0; i < total; i++) {

@@ -1,4 +1,4 @@
-import { linearToRgb, srgbToLinear } from './colorDistance'
+import { linearToRgb, srgbToLinear } from './colorDistance.ts'
 import type { SourceImage } from './types'
 
 export type DownscaleMode = 'mean' | 'dominant'
@@ -118,6 +118,108 @@ export function downscale(
   return mode === 'dominant'
     ? downscaleDominant(src, outW, outH)
     : downscaleAverage(src, outW, outH)
+}
+
+/**
+ * 把图片按统一比例放进目标格子，并允许缩放和移动。
+ * 输出格子外仍是白色，开启去背景后会被转换成空格而不是白豆。
+ */
+export function downscalePositioned(
+  src: SourceImage,
+  outW: number,
+  outH: number,
+  fit: FitMode,
+  scale = 1,
+  offsetX = 0,
+  offsetY = 0,
+  mode: DownscaleMode = 'mean',
+): DownscaleResult {
+  const width = Math.max(0, Math.floor(outW))
+  const height = Math.max(0, Math.floor(outH))
+  const out = new Uint8ClampedArray(width * height * 3)
+  out.fill(255)
+  if (!width || !height || !src.width || !src.height) return { width, height, data: out }
+
+  const safeScale = Math.max(0.1, Number.isFinite(scale) ? scale : 1)
+  const safeOffsetX = Number.isFinite(offsetX) ? Math.max(-1, Math.min(1, offsetX)) : 0
+  const safeOffsetY = Number.isFinite(offsetY) ? Math.max(-1, Math.min(1, offsetY)) : 0
+  const baseX = fit === 'stretch' ? width / src.width : Math.min(width / src.width, height / src.height)
+  const baseY = fit === 'stretch' ? height / src.height : fit === 'cover' ? Math.max(width / src.width, height / src.height) : baseX
+  const sourceScaleX = baseX * safeScale
+  const sourceScaleY = baseY * safeScale
+  const imageWidth = src.width * sourceScaleX
+  const imageHeight = src.height * sourceScaleY
+  const left = (width - imageWidth) / 2 + safeOffsetX * width
+  const top = (height - imageHeight) / 2 + safeOffsetY * height
+  const dominant = mode === 'dominant'
+  const counts = dominant ? new Uint32Array(262144) : null
+  const sums = dominant ? new Float64Array(262144 * 3) : null
+  const touched: number[] | null = dominant ? [] : null
+
+  for (let oy = 0; oy < height; oy++) {
+    const cy = oy + 0.5
+    if (cy < top || cy >= top + imageHeight) continue
+    const sy0 = Math.max(0, Math.min(src.height - 1, Math.floor((oy - top) / sourceScaleY)))
+    const sy1 = Math.min(src.height, Math.max(sy0 + 1, Math.ceil((oy + 1 - top) / sourceScaleY)))
+    for (let ox = 0; ox < width; ox++) {
+      const cx = ox + 0.5
+      if (cx < left || cx >= left + imageWidth) continue
+      const sx0 = Math.max(0, Math.min(src.width - 1, Math.floor((ox - left) / sourceScaleX)))
+      const sx1 = Math.min(src.width, Math.max(sx0 + 1, Math.ceil((ox + 1 - left) / sourceScaleX)))
+      let r = 0
+      let g = 0
+      let b = 0
+      let n = 0
+      let bestKey = -1
+      let bestCount = 0
+      if (touched) touched.length = 0
+      for (let y = sy0; y < sy1; y++) {
+        for (let x = sx0; x < sx1; x++) {
+          const i = (y * src.width + x) * 4
+          const pr = src.data[i]
+          const pg = src.data[i + 1]
+          const pb = src.data[i + 2]
+          if (dominant && counts && sums && touched) {
+            const key = ((pr >> 2) << 12) | ((pg >> 2) << 6) | (pb >> 2)
+            if (counts[key] === 0) touched.push(key)
+            counts[key]++
+            sums[key * 3] += pr
+            sums[key * 3 + 1] += pg
+            sums[key * 3 + 2] += pb
+            if (counts[key] > bestCount) {
+              bestCount = counts[key]
+              bestKey = key
+            }
+          } else {
+            r += srgbToLinear(pr)
+            g += srgbToLinear(pg)
+            b += srgbToLinear(pb)
+            n++
+          }
+        }
+      }
+      const o = (oy * width + ox) * 3
+      if (dominant && sums && bestKey >= 0) {
+        out[o] = Math.round(sums[bestKey * 3] / bestCount)
+        out[o + 1] = Math.round(sums[bestKey * 3 + 1] / bestCount)
+        out[o + 2] = Math.round(sums[bestKey * 3 + 2] / bestCount)
+      } else if (!dominant && n > 0) {
+        const rgb = linearToRgb([r / n, g / n, b / n])
+        out[o] = rgb[0]
+        out[o + 1] = rgb[1]
+        out[o + 2] = rgb[2]
+      }
+      if (touched && counts && sums) {
+        for (const key of touched) {
+          counts[key] = 0
+          sums[key * 3] = 0
+          sums[key * 3 + 1] = 0
+          sums[key * 3 + 2] = 0
+        }
+      }
+    }
+  }
+  return { width, height, data: out }
 }
 
 /** Fit the source into the target grid with white letterboxing; never crop or stretch. */

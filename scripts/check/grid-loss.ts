@@ -9,6 +9,7 @@ import { zlibSync } from 'fflate'
 
 import { PALETTES } from '../../src/data/palettes.ts'
 import { DEFAULT_SETTINGS } from '../../src/conversion/settings.ts'
+import { downscalePositioned } from '../../src/conversion/downscale.ts'
 
 import {
   boardGuide,
@@ -302,6 +303,14 @@ assert.deepEqual(
   validateLayout({ placements: [null as never], gapMm: 0 }),
   { kind: 'unknown-board', board: 'undefined' },
 )
+
+// 21. Image placement keeps the scaled image inside the intended translated region.
+{
+  const red = { width: 1, height: 1, data: new Uint8ClampedArray([255, 0, 0, 255]) }
+  const shifted = downscalePositioned(red, 5, 5, 'contain', 0.5, 0.5, 0, 'mean')
+  assert.deepEqual(Array.from(shifted.data.slice((2 * 5 + 4) * 3, (2 * 5 + 4) * 3 + 3)), [255, 0, 0])
+  assert.deepEqual(Array.from(shifted.data.slice(0, 3)), [255, 255, 255])
+}
 
 // Compact runtime data must keep every color index and RGB/Lab value identical to the source.
 const source = JSON.parse(readFileSync(new URL('../../src/data/palettes.json', import.meta.url), 'utf8'))

@@ -221,6 +221,10 @@ function readConversion(raw: unknown, notes: string[]): ConversionSettings | nul
   }
   const count = (v: unknown, fallback: number) =>
     typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : fallback
+  const bounded = (v: unknown, fallback: number, min: number, max: number) => {
+    const n = typeof v === 'number' && Number.isFinite(v) ? v : fallback
+    return Math.max(min, Math.min(max, n))
+  }
   return {
     strategyId: value.strategyId as ConversionSettings['strategyId'],
     maxColors: count(value.maxColors, DEFAULT_SETTINGS.maxColors),
@@ -229,6 +233,10 @@ function readConversion(raw: unknown, notes: string[]): ConversionSettings | nul
     removeBackground: value.removeBackground === true,
     clearExisting: value.clearExisting !== false,
     fit: value.fit === 'contain' || value.fit === 'stretch' ? value.fit : 'cover',
+    scale: bounded(value.scale, DEFAULT_SETTINGS.scale, 0.25, 3),
+    offsetX: bounded(value.offsetX, DEFAULT_SETTINGS.offsetX, -1, 1),
+    offsetY: bounded(value.offsetY, DEFAULT_SETTINGS.offsetY, -1, 1),
+    backgroundThreshold: bounded(value.backgroundThreshold, DEFAULT_SETTINGS.backgroundThreshold, 0, 100),
   }
 }
 
