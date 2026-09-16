@@ -79,9 +79,7 @@ export function Btn({
       aria-pressed={active === undefined ? undefined : active}
       onClick={onClick}
       {...handlers}
-      className={`${BTN_BASE} ${BTN_VARIANTS[variant]} ${wide ? 'w-full' : ''} ${
-        active ? 'border-accent bg-accent text-on-accent' : ''
-      } ${className ?? ''}`}
+      className={`${BTN_BASE} ${active ? 'border-accent bg-accent text-on-accent' : BTN_VARIANTS[variant]} ${wide ? 'w-full' : ''} ${className ?? ''}`}
     >
       <span ref={inner} className="inline-flex items-center gap-1.5">
         {children}

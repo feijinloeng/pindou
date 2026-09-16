@@ -20,7 +20,13 @@ import {
 import { EMPTY, lostCells } from '../../src/domain/grid.ts'
 import { PT_PER_MM } from '../../src/domain/geometry.ts'
 import { paletteDisplayLabel } from '../../src/domain/palette.ts'
-import { paperLayout, planAnnotations } from '../../src/render/documentLayout.ts'
+import {
+  PAPER_FOOTER_MM,
+  PAPER_HEADER_MM,
+  paginate,
+  paperLayout,
+  planAnnotations,
+} from '../../src/render/documentLayout.ts'
 import { exportFilename } from '../../src/render/download.ts'
 import { createPdfSink } from '../../src/render/pdf.ts'
 import {
@@ -216,23 +222,40 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
   assert.equal(first.range.cols * 2.6, 18.2)
 }
 
-// 16. Even a thin logical edge page with no colored beads is printable content (grid/red guides),
-// so the two final strips must still be packed instead of remaining as two mostly blank A4 pages.
+// 16. Pagination keeps the minimum page count but balances the shared ranges instead of
+// leaving a tiny final strip that costs paper and extra cutting.
 {
+  const ranges = paginate(208, 70, 110, 70, 3)
+  assert.equal(ranges.length, 2)
+  assert.ok(Math.abs(ranges[0].cols - ranges[1].cols) <= 1)
+  assert.equal(ranges[1].col0, ranges[0].cols - 3)
+
   const blank = paperLayout(grid(150, 150), 2.6, { overlap: 3 })
   assert.equal(blank.sheets.length, 6)
-  const lastPage = blank.pages?.at(-1)
-  assert.ok(lastPage)
-  assert.equal(lastPage.fragments.length, 2)
-  assert.deepEqual(
-    lastPage.fragments.map((fragment) => fragment.sourceIndex),
-    [4, 5],
-  )
-  assert.ok(lastPage.fragments.every((fragment) => fragment.showLabel))
-  assert.ok(Math.abs(lastPage.fragments[0].yPt - lastPage.fragments[1].yPt) >= 10 * PT_PER_MM)
+  const rowRanges = [...new Map(blank.sheets.map((sheet) => [sheet.row0, sheet.rows])).values()]
+  assert.equal(rowRanges.length, 2)
+  assert.ok(Math.max(...rowRanges) - Math.min(...rowRanges) <= 1)
 }
 
-// 17-19. Project input validation rejects unknown palettes and coercible bad cell values,
+// 17. The pattern never enters the reserved header/footer bands on a physical A4 page.
+{
+  const g = grid(208, 70)
+  g.cells.fill(0)
+  const layout = paperLayout(g, 2.6, { overlap: 3 })
+  const pageHeightPt = layout.pageMm.h * PT_PER_MM
+  const bodyBottom = (layout.marginMm + PAPER_FOOTER_MM) * PT_PER_MM
+  const bodyTop = pageHeightPt - (layout.marginMm + PAPER_HEADER_MM) * PT_PER_MM
+  for (const page of layout.pages ?? []) {
+    for (const fragment of page.fragments) {
+      const bottom = fragment.yPt
+      const top = bottom + fragment.range.rows * 2.6 * PT_PER_MM
+      assert.ok(bottom >= bodyBottom - 0.01)
+      assert.ok(top <= bodyTop + 0.01)
+    }
+  }
+}
+
+// 18-20. Project input validation rejects unknown palettes and coercible bad cell values,
 // while a normal compressed project still round-trips.
 {
   const layout = { placements: [{ board: 'mini26' as const, col: 0, row: 0 }], gapMm: 0 }

@@ -9,6 +9,8 @@ export const A4_MM = { w: 210, h: 297 }
 export const DEFAULT_MARGIN_MM = 5
 /** 纸面版页眉预留区：标题、范围和坐标数字不能压到图案上。 */
 export const PAPER_HEADER_MM = 18
+/** 纸面版页脚预留区：校准尺和校验文字不能进入图案正文。 */
+export const PAPER_FOOTER_MM = 16
 /** 重叠带宽度：3 列 / 行豆，兼顾辨认和省纸 */
 export const OVERLAP_CELLS = 3
 /** 裁切后片段之间留出的空白，方便用剪刀分开。 */
@@ -79,18 +81,22 @@ export interface PaperScope {
 }
 
 /**
- * A4 上按针距能放多少格（默认竖版：2.6mm → 76 × 110）。
- * 传入横版页面尺寸后，列 / 行容量会自动互换。
+ * A4 上按针距能放多少格（不传预留时，2.6mm 约为 76 × 110）。
+ * 传入横版页面尺寸后，列 / 行容量会自动互换；页眉和页脚预留区不计入正文。
  */
 export function paperCapacity(
   pitchMm: number,
   marginMm = DEFAULT_MARGIN_MM,
   pageMm: { w: number; h: number } = A4_MM,
   topReserveMm = 0,
+  bottomReserveMm = 0,
 ) {
   return {
     cols: Math.max(1, Math.floor((pageMm.w - marginMm * 2) / pitchMm)),
-    rows: Math.max(1, Math.floor((pageMm.h - marginMm * 2 - topReserveMm) / pitchMm)),
+    rows: Math.max(
+      1,
+      Math.floor((pageMm.h - marginMm * 2 - topReserveMm - bottomReserveMm) / pitchMm),
+    ),
   }
 }
 
@@ -133,6 +139,29 @@ export function countPages(total: number, perPage: number, overlap: number): num
   return Math.max(1, Math.ceil((total - perPage) / step) + 1)
 }
 
+function balancedRanges(
+  total: number,
+  perPage: number,
+  overlap: number,
+): Array<{ start: number; count: number }> {
+  if (total <= 0) return []
+  const safeOverlap = Math.max(0, Math.min(Math.floor(overlap), perPage - 1, total - 1))
+  const pages = countPages(total, perPage, safeOverlap)
+  // Keep the minimum page count, then spread the shared overlap across all pages
+  // so the last page is not reduced to a tiny strip.
+  const covered = total + safeOverlap * (pages - 1)
+  const base = Math.floor(covered / pages)
+  const extra = covered % pages
+  const ranges: Array<{ start: number; count: number }> = []
+  let start = 0
+  for (let index = 0; index < pages; index++) {
+    const count = base + (index < extra ? 1 : 0)
+    ranges.push({ start, count })
+    start += count - safeOverlap
+  }
+  return ranges
+}
+
 export function paginate(
   cols: number,
   rows: number,
@@ -140,13 +169,11 @@ export function paginate(
   perPageRows: number,
   overlap: number,
 ): SheetRange[] {
-  const colPages = countPages(cols, perPageCols, overlap)
-  const rowPages = countPages(rows, perPageRows, overlap)
+  const colRanges = balancedRanges(cols, perPageCols, overlap)
+  const rowRanges = balancedRanges(rows, perPageRows, overlap)
   const sheets: SheetRange[] = []
-  for (let r = 0; r < rowPages; r++) {
-    const rowsRange = sheetAt(r, rows, perPageRows, overlap)
-    for (let c = 0; c < colPages; c++) {
-      const colsRange = sheetAt(c, cols, perPageCols, overlap)
+  for (const rowsRange of rowRanges) {
+    for (const colsRange of colRanges) {
       sheets.push({
         col0: colsRange.start,
         row0: rowsRange.start,
@@ -235,7 +262,13 @@ export function paperLayout(
 
   const candidate = (orientation: PaperOrientation) => {
     const pageMm = a4PageMm(orientation)
-    const capacity = paperCapacity(pitchMm, marginMm, pageMm, PAPER_HEADER_MM)
+    const capacity = paperCapacity(
+      pitchMm,
+      marginMm,
+      pageMm,
+      PAPER_HEADER_MM,
+      PAPER_FOOTER_MM,
+    )
     // 至少保留一格新的内容，避免极端小页面被重叠带完全占满。
     const overlap = Math.max(
       0,
@@ -411,7 +444,10 @@ function packPaperPages(
   const pageHeightPt = pageMm.h * PT_PER_MM
   const marginPt = marginMm * PT_PER_MM
   const contentWidthPt = pageWidthPt - marginPt * 2
-  const contentHeightPt = pageHeightPt - marginPt * 2 - PAPER_HEADER_MM * PT_PER_MM
+  const contentHeightPt =
+    pageHeightPt -
+    marginPt * 2 -
+    (PAPER_HEADER_MM + PAPER_FOOTER_MM) * PT_PER_MM
   const gapPt = PAPER_PACK_GAP_MM * PT_PER_MM
   const labelPt = PAPER_FRAGMENT_LABEL_PT
   const capacity = {

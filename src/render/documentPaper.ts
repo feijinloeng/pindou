@@ -446,8 +446,8 @@ function drawRuler(
   origin: { x: number; y: number },
 ): void {
   const { P, pitchMm } = ctx
-  // 固定放在下边距里：不论这一页用了多少行，量尺的位置都一样，方便对照
-  const baseY = Math.max(4, ctx.margin - 9)
+  // 固定放在页脚预留区：不论这一页用了多少行，量尺的位置都一样，且不会压到正文。
+  const baseY = ctx.margin + 4
   const tickTop = baseY + 4
 
   sink.strokeColor([0, 0, 0])

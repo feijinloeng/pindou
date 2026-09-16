@@ -5,9 +5,7 @@ import { getPalette } from '../data/palettes'
 import { deriveLayoutGeometry } from '../domain/board'
 import {
   createProject,
-  cryptoId,
   normalizeGridForLayout,
-  parseProject,
   serializeProject,
 } from '../domain/project'
 import { useEditor } from '../editor/store'
@@ -15,7 +13,6 @@ import { gsap, MOTION, reducedMotion } from '../motion'
 import { downloadBytes, safeName } from '../render/download'
 import { renderThumbnailDataUrl } from '../render/thumbnail'
 import {
-  get,
   getLatestProject,
   getProject,
   listProjectEntries,
@@ -59,7 +56,6 @@ export default function Library({
   const [tab, setTab] = useState<Tab>('projects')
   const [newOpen, setNewOpen] = useState(false)
   const [details, setDetails] = useState<ProjectIndex | null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
   const copy = t('library')
 
   const refresh = useCallback(() => {
@@ -175,20 +171,6 @@ export default function Library({
       )
     })
 
-  const importProject = (file: File) => runWrite(async () => {
-    const result = parseProject(await file.text())
-    if (!result.project) throw new Error(`${copy.importFailed}：${result.error?.message ?? ''}`)
-    let project = result.project
-    // Import collisions become separate copies, never overwrite local edits or trash.
-    const existing = await Promise.all([get('projects', project.id), get('drafts', project.id)])
-    if (existing.some(Boolean) || useEditor.getState().projectId === project.id) {
-      project = { ...project, id: cryptoId(), name: `${cleanName(project.name)} ${copy.importedCopy}` }
-    }
-    await putProject(project)
-    await refresh()
-    if (result.error) window.alert(result.error.message)
-  })
-
   // 本地搜索 + 按更新时间排序 + 作品/回收站分栏。都不改写盘数据。
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -235,17 +217,6 @@ export default function Library({
           : 'mx-auto flex h-full w-full max-w-[1088px] flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6'
       }
     >
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".json,application/json"
-        className="hidden"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) void importProject(file)
-          event.target.value = ''
-        }}
-      />
       {!embedded && (
         <>
       <div className="flex flex-wrap items-end gap-2">
@@ -257,9 +228,6 @@ export default function Library({
           <Btn variant="primary" onClick={() => setNewOpen(true)} disabled={busy}>
             <Plus size={14} aria-hidden />
             {copy.new}
-          </Btn>
-          <Btn onClick={() => fileRef.current?.click()} disabled={busy}>
-            {copy.import}
           </Btn>
         </div>
       </div>
@@ -326,13 +294,10 @@ export default function Library({
           ) : (
             <>
               <p className="text-sm text-ink-2">{copy.empty}</p>
-              <div className="flex gap-2">
-                <Btn variant="primary" onClick={() => setNewOpen(true)}>
-                  <Plus size={14} aria-hidden />
-                  {copy.new}
-                </Btn>
-                <Btn onClick={() => fileRef.current?.click()}>{copy.import}</Btn>
-              </div>
+              <Btn variant="primary" onClick={() => setNewOpen(true)}>
+                <Plus size={14} aria-hidden />
+                {copy.new}
+              </Btn>
             </>
           )}
         </div>
@@ -344,7 +309,6 @@ export default function Library({
         <div className="flex gap-1" role="group" aria-label={copy.title}>
           <Btn active={tab === 'projects'} onClick={() => setTab('projects')}>{copy.tabProjects}</Btn>
           <Btn active={tab === 'trash'} onClick={() => setTab('trash')}>{copy.tabTrash}</Btn>
-          <Btn onClick={() => fileRef.current?.click()} disabled={busy}>{copy.import}</Btn>
         </div>
       )}
       {error && (
