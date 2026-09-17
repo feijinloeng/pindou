@@ -2,11 +2,8 @@
 import { useEffect, useRef, useState } from 'react'
 
 import gsap from 'gsap'
-import { useGSAP } from '@gsap/react'
 
 import { systemReducedMotion, useUi } from './editor/uiState'
-
-gsap.registerPlugin(useGSAP)
 
 /**
  * 全站动效规格（spec 12.2）。时长和缓动都从这里取 —— 组件里各写一套数字，
@@ -150,4 +147,4 @@ export function usePresence<T extends HTMLElement = HTMLDivElement>(
   return { ref, shown, exiting: shown && !open }
 }
 
-export { gsap, useGSAP }
+export { gsap }

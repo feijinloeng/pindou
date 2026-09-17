@@ -12,6 +12,8 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { rgbToLab } from '../../src/conversion/colorDistance.ts'
+import { hexToRgb } from '../../src/domain/palette.ts'
 
 const RAW = 'https://raw.githubusercontent.com'
 const MAXCLEME = `${RAW}/maxcleme/beadcolors/master`
@@ -38,29 +40,7 @@ interface Palette {
   source: { repo: string; license: string; path: string; retrievedAt: string; note?: string }
 }
 
-// ---------- 色彩换算（和 src/conversion/colorDistance.ts 同一套公式，这里独立实现一份，
-//             保证构建产物不依赖应用代码的变化） ----------
-
-function srgbToLinear(channel: number): number {
-  const c = channel / 255
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
-}
-
-function labF(t: number): number {
-  const delta3 = (6 / 29) ** 3
-  return t > delta3 ? Math.cbrt(t) : (24389 / 27) * t / 116 + 16 / 116
-}
-
-function rgbToLab(rgb: [number, number, number]): [number, number, number] {
-  const [r, g, b] = rgb.map(srgbToLinear)
-  const x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047
-  const y = 0.2126729 * r + 0.7151522 * g + 0.072175 * b
-  const z = (0.0193339 * r + 0.119192 * g + 0.9503041 * b) / 1.08883
-  const fx = labF(x)
-  const fy = labF(y)
-  const fz = labF(z)
-  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)]
-}
+// ---------- 色彩换算（复用应用里的纯函数，这里只做存储精度取整） ----------
 
 function round(value: number, digits = 4): number {
   const factor = 10 ** digits
@@ -69,15 +49,6 @@ function round(value: number, digits = 4): number {
 
 function normalizeHex(hex: string): string {
   return `#${hex.replace('#', '').toUpperCase().padStart(6, '0')}`
-}
-
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '')
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ]
 }
 
 /**

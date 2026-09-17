@@ -54,6 +54,7 @@ export function Btn({
   active,
   disabled,
   title,
+  ariaLabel,
   variant = 'secondary',
   wide,
   className,
@@ -65,6 +66,7 @@ export function Btn({
   active?: boolean
   disabled?: boolean
   title?: string
+  ariaLabel?: string
   variant?: BtnVariant
   wide?: boolean
   className?: string
@@ -75,6 +77,7 @@ export function Btn({
     <button
       type={type}
       title={title}
+      aria-label={ariaLabel}
       disabled={disabled}
       aria-pressed={active === undefined ? undefined : active}
       onClick={onClick}

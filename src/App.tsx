@@ -4,7 +4,6 @@ import ErrorBoundary from './components/ErrorBoundary'
 import ProjectSession from './storage/ProjectSession'
 import { applyUiPrefs } from './editor/uiState'
 import { animate, MOTION } from './motion'
-import { normalizeLegacyHash } from './router'
 import { t } from './i18n/zh'
 
 /**
@@ -17,7 +16,11 @@ export default function App() {
   useEffect(() => applyUiPrefs(), [])
 
   // 独立作品库页面已移除：旧链接统一回到编辑器，且不新增浏览历史记录。
-  useEffect(() => normalizeLegacyHash(), [])
+  useEffect(() => {
+    const name = window.location.hash.replace(/^#\/?/, '').split('?')[0]
+    if (name !== 'library') return
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/editor`)
+  }, [])
 
   // 换页时整块内容淡入（180ms，不位移：transform 会改掉画布浮层的包含块）
   const mainRef = useRef<HTMLElement>(null)

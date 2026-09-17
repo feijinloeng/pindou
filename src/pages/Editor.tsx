@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 
 import { shouldHandleCanvasKey } from '../editor/keyboard'
 import { escapeTopmost, hasOverlay, Z } from '../components/overlayState'
@@ -10,7 +10,7 @@ import PanelHost from '../components/PanelHost'
 import SelectionBar from '../components/SelectionBar'
 import Toolbar from '../components/Toolbar'
 import { useEditor, type ToolId } from '../editor/store'
-import { gsap, MOTION, reducedMotion, useGSAP } from '../motion'
+import { gsap, MOTION, reducedMotion } from '../motion'
 
 const TOOL_KEYS: Record<string, ToolId> = {
   b: 'pencil',
@@ -28,13 +28,18 @@ export default function Editor() {
   const rootRef = useRef<HTMLDivElement>(null)
 
   // 首次编辑器显示：头 180ms、画布 220ms、dock 240ms，总时长不超 400ms。
-  useGSAP(() => {
+  useLayoutEffect(() => {
     if (reducedMotion()) return
-    const tl = gsap.timeline()
-    tl.from('.editor-header', { opacity: 0, duration: 0.18, ease: MOTION.easeOut })
-      .from('.canvas-layer', { opacity: 0, duration: 0.22, ease: MOTION.easeOut }, '<0.02')
-      .from('.tool-dock', { opacity: 0, y: 8, duration: 0.24, ease: MOTION.easeOut }, '<0.04')
-  }, { scope: rootRef })
+    const root = rootRef.current
+    if (!root) return
+    const ctx = gsap.context(() => {
+      const tl = gsap.timeline()
+      tl.from('.editor-header', { opacity: 0, duration: 0.18, ease: MOTION.easeOut })
+        .from('.canvas-layer', { opacity: 0, duration: 0.22, ease: MOTION.easeOut }, '<0.02')
+        .from('.tool-dock', { opacity: 0, y: 8, duration: 0.24, ease: MOTION.easeOut }, '<0.04')
+    }, root)
+    return () => ctx.revert()
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

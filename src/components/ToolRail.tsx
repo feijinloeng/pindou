@@ -15,15 +15,14 @@ import {
   SquaresFour,
 } from '@phosphor-icons/react'
 
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { useEditor, type PanelId, type ToolId } from '../editor/store'
 import { labelTextColor } from '../domain/palette'
 import { t } from '../i18n/zh'
-import { gsap, MOTION, reducedMotion } from '../motion'
 import NewProjectDialog from './NewProjectDialog'
 import { Z } from './overlayState'
-import { Tip } from './ui'
+import { Btn, Tip } from './ui'
 
 /**
  * Excalidraw 式顶部工具岛：功能入口、绘图工具、视图控制和历史操作。
@@ -150,16 +149,22 @@ export default function ToolDock() {
 
         <div aria-hidden className="mx-1 h-6 w-px bg-line" />
 
-        {TOOLS.map((item) => (
-          <DockButton
-            key={item.id}
-            label={`${names[item.id].name}：${names[item.id].hint}（${item.key}）`}
-            active={tool === item.id}
-            onClick={() => setTool(item.id)}
-          >
-            {item.icon}
-          </DockButton>
-        ))}
+        {TOOLS.map((item) => {
+          const label = `${names[item.id].name}：${names[item.id].hint}（${item.key}）`
+          return (
+            <Tip key={item.id} label={label} placement="bottom">
+              <Btn
+                ariaLabel={label}
+                active={tool === item.id}
+                onClick={() => setTool(item.id)}
+                variant="ghost"
+                className={`h-10 w-10 p-0 disabled:opacity-30 ${tool === item.id ? '' : 'text-ink hover:bg-hover'}`}
+              >
+                {item.icon}
+              </Btn>
+            </Tip>
+          )
+        })}
 
         <Tip label={transformLauncher.label} placement="bottom">
           <button
@@ -227,57 +232,5 @@ export default function ToolDock() {
         <NewProjectDialog open={newOpen} onClose={() => setNewOpen(false)} />
 
     </nav>
-  )
-}
-
-/** dock 里的 34px 图标按钮：按压反馈只作用在内部 span 上 */
-function DockButton({
-  children,
-  label,
-  active,
-  disabled,
-  onClick,
-}: {
-  children: React.ReactNode
-  label: string
-  active?: boolean
-  disabled?: boolean
-  onClick?: () => void
-}) {
-  const inner = useRef<HTMLSpanElement>(null)
-  const release = () => {
-    if (inner.current && !reducedMotion()) {
-      gsap.to(inner.current, {
-        scale: 1,
-        duration: MOTION.release,
-        ease: MOTION.easeBack,
-        overwrite: 'auto',
-      })
-    }
-  }
-  return (
-    <Tip label={label} placement="bottom">
-      <button
-        type="button"
-        aria-label={label}
-        aria-pressed={active}
-        disabled={disabled}
-        onClick={onClick}
-        onPointerDown={() => {
-          if (inner.current && !reducedMotion()) {
-            gsap.to(inner.current, { scale: 0.97, duration: MOTION.press, overwrite: 'auto' })
-          }
-        }}
-        onPointerUp={release}
-        onPointerLeave={release}
-        className={`flex h-10 w-10 items-center justify-center rounded-lg disabled:cursor-not-allowed disabled:opacity-30 ${
-          active ? 'bg-accent text-on-accent' : 'text-ink hover:bg-hover'
-        }`}
-      >
-        <span ref={inner} className="inline-flex">
-          {children}
-        </span>
-      </button>
-    </Tip>
   )
 }
