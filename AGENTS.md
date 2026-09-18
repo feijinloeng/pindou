@@ -11,7 +11,7 @@ All project data stays in the visitor's browser (IndexedDB). Images are decoded 
 - Keep user-facing text in Simplified Chinese through `src/i18n/zh.ts`.
 - Preserve the project format, legacy project-file compatibility, grid geometry, palette data, conversion pipeline, IndexedDB behavior, and export formats.
 - Pattern colors, exported images, and thumbnails must stay true to the selected palette; application styling must not recolor them.
-- Validate imported project data and image inputs before allocating large buffers or running expensive work.
+- Validate stored project data and image inputs before allocating large buffers or running expensive work.
 - Confirm actions that can discard beads or projects. Project deletion remains recoverable by default; permanent purge must stay behind explicit confirmation.
 - Respect reduced-motion preferences. Canvas drawing is Canvas 2D work, not DOM animation.
 - Never commit credentials, private project images, server addresses, or user data.
@@ -22,7 +22,7 @@ All project data stays in the visitor's browser (IndexedDB). Images are decoded 
 
 - `src/App.tsx` — editor shell; the library is an in-editor panel. `#/library` is a legacy redirect to `#/editor`.
 - `src/pages/Editor.tsx` — switches between the canvas, board picker, and export stage while keeping the canvas session alive.
-- `src/pages/Library.tsx` — local project library, project import/export, recoverable trash, and lightweight indexes.
+- `src/pages/Library.tsx` — local project library, project export, recoverable trash, and lightweight indexes.
 - `src/components/` — canvas, panels, tool dock, overlays, notices, export UI, and shared controls.
 - `src/editor/store.ts` — Zustand editing state and actions.
 - `src/domain/` — board geometry, grid rules, palette-independent project validation, and project serialization.
@@ -47,7 +47,7 @@ npm run build
 npm run preview
 ```
 
-`npm run check` runs the grid-loss self-check. `npm run check:browser` runs persistence, import, canvas, and export checks in an isolated browser profile.
+`npm run check` runs the grid-loss self-check. `npm run check:browser` runs persistence, image conversion, canvas, and export checks in an isolated browser profile.
 
 ## Deployment
 

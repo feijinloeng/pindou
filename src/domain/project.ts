@@ -18,10 +18,8 @@ import type { ConversionSettings } from '../conversion/convert.ts'
 import { DEFAULT_SETTINGS } from '../conversion/settings.ts'
 import { STRATEGIES } from '../conversion/strategies.ts'
 
-/** 工程文件必须带 schemaVersion 和迁移函数（第 3.3 节） */
+/** 工程数据必须带 schemaVersion 和迁移函数。 */
 export const PROJECT_SCHEMA_VERSION = 1
-/** 外部工程文件的 JSON 上限；足够容纳 MAX_CELLS 的压缩网格，同时避免超大文本冻结页面。 */
-export const MAX_PROJECT_FILE_BYTES = 32 * 1024 * 1024
 const MAX_TEXT_FIELD_LENGTH = 200
 const MAX_ALLOWED_CODES = 512
 const MIN_VIEW_ZOOM = 0.15
@@ -255,27 +253,7 @@ function readConversion(raw: unknown, notes: string[]): ConversionSettings | nul
 }
 
 /**
- * 读：校验 schemaVersion → 迁移 → 校验格数 / 数组长度 / 色号。
- * 任一项不通过就明确报错，不静默修复（第 14.3 节）。
- */
-export function parseProject(text: string): ParseResult {
-  if (text.length > MAX_PROJECT_FILE_BYTES) {
-    return {
-      project: null,
-      error: { kind: 'fatal', message: `工程文件超过 ${MAX_PROJECT_FILE_BYTES / 1024 / 1024}MB 上限` },
-    }
-  }
-  let raw: unknown
-  try {
-    raw = JSON.parse(text)
-  } catch {
-    return { project: null, error: { kind: 'fatal', message: '文件不是合法的 JSON' } }
-  }
-  return validateProject(raw)
-}
-
-/**
- * 工程对象的唯一入口校验。三条读路径共用：工程文件导入、IndexedDB 读取、复制。
+ * 工程对象的唯一入口校验。IndexedDB 读取、复制和旧数据恢复共用这条路径。
  *
  * 结构性错误（版本 / 格数 / 解码 / 板阵 / 色板 id）直接拒绝；
  * 可修的字段（时间戳 / 视图 / 越界白名单 / 空档脏数据）就地修好，
@@ -342,7 +320,7 @@ export function validateProject(raw: unknown): ParseResult {
   let restored: CellGrid
   try {
     if (typeof grid.data === 'string') {
-      // 工程文件：zlib + base64。压缩流不可能比原始 U16 流大很多，先挡住异常长字符串。
+      // zlib + base64。压缩流不可能比原始 U16 流大很多，先挡住异常长字符串。
       const expected = cells * 2
       const maxEncoded = Math.ceil(expected * 4 / 3) + 256
       if (grid.data.length > maxEncoded) {
@@ -511,7 +489,7 @@ export function cryptoId(): string {
 
 /**
  * IndexedDB 里可能还躺着老版本写的工程（只有 boardArray，甚至两个字段都没有）。
- * 和工程文件走同一套校验，别让坏数据绕过导入那条路直接进运行时。
+ * 和保存的数据走同一套校验，别让坏数据绕过这条路径直接进运行时。
  */
 export function decodeStoredProject(value: unknown): Project | null {
   try {

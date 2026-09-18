@@ -2,7 +2,7 @@
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
-import { createProject, serializeProject, type Project } from '../../src/domain/project'
+import { createProject, type Project } from '../../src/domain/project'
 import { createGrid, EMPTY } from '../../src/domain/grid'
 import { deriveLayoutGeometry } from '../../src/domain/board'
 import { useEditor } from '../../src/editor/store'
@@ -186,16 +186,7 @@ export async function run(): Promise<string> {
     await useEditor.getState().saveNow()
     assert((await db.getLatestProject(id))?.project.name === 'Renamed project', 'Autosave must not restore the previous name.')
 
-    const imported = { ...useEditor.getState().toProject(), name: 'Imported collision' }
-    imported.grid.cells[0] = 7
-    const transfer = new DataTransfer()
-    transfer.items.add(new File([serializeProject(imported)], 'collision.pindou.json', { type: 'application/json' }))
-    const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]')!
-    fileInput.files = transfer.files
-    fileInput.dispatchEvent(new Event('change', { bubbles: true }))
-    const importedCopy = await until(async () => (await db.getAll<Project>('projects')).find((item) => typeof item.name === 'string' && item.name.startsWith('Imported collision')))
-    assert(importedCopy.id !== id && useEditor.getState().grid.cells[0] === 6, 'An import collision must never overwrite the current editor.')
-    assert((await db.getLatestProject(id))?.project.grid.cells[0] === 6, 'An import collision must preserve the existing draft.')
+    assert(!document.querySelector('input[type="file"]'), 'Library must not expose project file import.')
     assert([...document.querySelectorAll('button')].some((item) => item.textContent === t('library').tabTrash), 'Embedded library must expose the recycle bin.')
 
     const originalGetAll = IDBObjectStore.prototype.getAll
@@ -204,7 +195,7 @@ export async function run(): Promise<string> {
       useEditor.setState({ savedAt: new Date().toISOString() })
       await until(() => document.querySelector('[role="alert"]')?.textContent?.includes('Injected read failure'))
     } finally { IDBObjectStore.prototype.getAll = originalGetAll }
-    results.push('PASS: library duplicate, rename, import collision, recycle-bin access and visible read errors')
+    results.push('PASS: library duplicate, rename, no file chooser, recycle-bin access and visible read errors')
 
     flushSync(() => root.render(createElement('div', { style: { width: 900, height: 700 } }, createElement(CanvasStage))))
     await sleep(50)

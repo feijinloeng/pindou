@@ -7,7 +7,7 @@ Pindou is a browser-only Chinese fuse-bead / pegboard pattern editor.
 - Arrange physical pegboards and draw on a Canvas 2D grid.
 - Import an image and convert it to a palette-limited bead pattern locally.
 - Manage palettes, selections, transforms, drafts, thumbnails, and exports.
-- Import and export `.pindou.json` project files.
+- Export `.pindou.json` project files as backups.
 
 There is no backend, account, login, payment, cloud sync, or upload service. Projects and cached source images stay in the browser's IndexedDB. Export a project file before clearing browser data or changing devices.
 

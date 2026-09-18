@@ -3,14 +3,7 @@ import { DotsThree, MagnifyingGlass, Plus, X } from '@phosphor-icons/react'
 
 import { getPalette } from '../data/palettes'
 import { deriveLayoutGeometry } from '../domain/board'
-import {
-  createProject,
-  cryptoId,
-  MAX_PROJECT_FILE_BYTES,
-  normalizeGridForLayout,
-  parseProject,
-  serializeProject,
-} from '../domain/project'
+import { createProject, normalizeGridForLayout, serializeProject } from '../domain/project'
 import { useEditor } from '../editor/store'
 import { gsap, MOTION, reducedMotion } from '../motion'
 import { downloadBytes, safeName } from '../render/download'
@@ -59,7 +52,6 @@ export default function Library({
   const [tab, setTab] = useState<Tab>('projects')
   const [newOpen, setNewOpen] = useState(false)
   const [details, setDetails] = useState<ProjectIndex | null>(null)
-  const importRef = useRef<HTMLInputElement>(null)
   const copy = t('library')
 
   const refresh = useCallback(() => {
@@ -174,25 +166,6 @@ export default function Library({
       )
     })
 
-  const importProject = (file: File) =>
-    runWrite(async () => {
-      if (file.size > MAX_PROJECT_FILE_BYTES) {
-        throw new Error(copy.importTooLarge)
-      }
-      const result = parseProject(await file.text())
-      if (!result.project) throw new Error(result.error?.message ?? copy.importFailed)
-      const recoveryNote = result.error?.kind === 'recovered' ? result.error.message : null
-      await putProject({
-        ...result.project,
-        id: cryptoId(),
-        updatedAt: new Date().toISOString(),
-      })
-      await refresh()
-      if (recoveryNote) setError(recoveryNote)
-    })
-
-  const triggerImport = () => importRef.current?.click()
-
   // 本地搜索 + 按更新时间排序 + 作品/回收站分栏。都不改写盘数据。
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -248,7 +221,6 @@ export default function Library({
             <Plus size={14} aria-hidden />
             {copy.new}
           </Btn>
-          <Btn onClick={triggerImport} disabled={busy}>{copy.importProject}</Btn>
         </div>
       </div>
 
@@ -319,7 +291,6 @@ export default function Library({
                   <Plus size={14} aria-hidden />
                   {copy.new}
                 </Btn>
-                <Btn onClick={triggerImport}>{copy.importProject}</Btn>
               </div>
             </>
           )}
@@ -332,7 +303,6 @@ export default function Library({
         <div className="flex flex-wrap gap-1" role="group" aria-label={copy.title}>
           <Btn active={tab === 'projects'} onClick={() => setTab('projects')}>{copy.tabProjects}</Btn>
           <Btn active={tab === 'trash'} onClick={() => setTab('trash')}>{copy.tabTrash}</Btn>
-          <Btn onClick={triggerImport} disabled={busy}>{copy.importProject}</Btn>
         </div>
       )}
       {error && (
@@ -381,17 +351,6 @@ export default function Library({
       </div>
 
       {!embedded && <NewProjectDialog open={newOpen} onClose={() => setNewOpen(false)} />}
-      <input
-        ref={importRef}
-        type="file"
-        accept=".json,.pindou.json,application/json"
-        className="hidden"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          event.target.value = ''
-          if (file) void importProject(file)
-        }}
-      />
       <ProjectDetails project={details} onClose={() => setDetails(null)} />
     </div>
   )

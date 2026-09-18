@@ -32,7 +32,6 @@ import { exportFilename, safeName } from '../../src/render/download.ts'
 import { createPdfSink } from '../../src/render/pdf.ts'
 import {
   createProject,
-  parseProject,
   serializeProject,
   validateProject,
 } from '../../src/domain/project.ts'
@@ -269,7 +268,7 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
     grid: grid(geometry.cols, geometry.rows, geometry.placeable),
   })
   const serialized = serializeProject(project)
-  const roundTrip = parseProject(serialized)
+  const roundTrip = validateProject(JSON.parse(serialized))
   assert.ok(roundTrip.project)
   assert.equal(roundTrip.project?.name, project.name)
 
@@ -288,7 +287,7 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
     assert.equal(validateProject(badCells).project, null)
   }
   const withConversion = { ...project, conversion: { ...DEFAULT_SETTINGS, strategyId: 'auto' as const, dither: 0.35 } }
-  assert.deepEqual(parseProject(serializeProject(withConversion)).project?.conversion, withConversion.conversion)
+  assert.deepEqual(validateProject(JSON.parse(serializeProject(withConversion))).project?.conversion, withConversion.conversion)
   const badGap = { ...project, layout: { ...layout, gapMm: -1 } }
   assert.equal(validateProject(badGap).project?.layout.gapMm, 0)
   const hostile = JSON.parse(serialized) as Record<string, unknown>

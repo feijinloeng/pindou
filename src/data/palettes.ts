@@ -52,7 +52,7 @@ export const PALETTES: Palette[] = PALETTE_FILE.palettes.map((palette) => ({
 
 export const DEFAULT_PALETTE_ID = 'mard-221'
 
-/** 找不到就返回 null。导入工程时必须能区分“没有这套色板”和“就用第一套” */
+/** 找不到就返回 null；校验数据时必须区分“没有这套色板”和“就用第一套”。 */
 export function findPalette(id: unknown): Palette | null {
   if (typeof id !== 'string') return null
   return PALETTES.find((p) => p.id === id) ?? null
