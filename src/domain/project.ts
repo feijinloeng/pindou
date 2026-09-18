@@ -20,6 +20,13 @@ import { STRATEGIES } from '../conversion/strategies.ts'
 
 /** 工程文件必须带 schemaVersion 和迁移函数（第 3.3 节） */
 export const PROJECT_SCHEMA_VERSION = 1
+/** 外部工程文件的 JSON 上限；足够容纳 MAX_CELLS 的压缩网格，同时避免超大文本冻结页面。 */
+export const MAX_PROJECT_FILE_BYTES = 32 * 1024 * 1024
+const MAX_TEXT_FIELD_LENGTH = 200
+const MAX_ALLOWED_CODES = 512
+const MIN_VIEW_ZOOM = 0.15
+const MAX_VIEW_ZOOM = 64
+const MAX_VIEW_PAN = 10_000_000
 
 export interface ProjectView {
   zoom: number
@@ -32,7 +39,6 @@ export interface Project {
   schemaVersion: number
   id: string
   name: string
-  customer: string | null
   createdAt: string
   updatedAt: string
   /** 板阵：自由摆放的板列表。老工程只有 boardArray，读的时候会转过来 */
@@ -157,7 +163,7 @@ function finiteOr(value: unknown, fallback: number): number {
 }
 
 function isIsoDate(value: unknown): value is string {
-  return typeof value === 'string' && value.length >= 10 && Number.isFinite(Date.parse(value))
+  return typeof value === 'string' && value.length >= 10 && value.length <= 64 && Number.isFinite(Date.parse(value))
 }
 
 /** IndexedDB 里格子就是 Uint16Array；写成普通数组也认，坏数据不认 */
@@ -183,14 +189,17 @@ function joinNotes(notes: string[]): ParseError | null {
 /** 视图设置：数值必须是有限正数，否则重置。视图坏了不值得拒绝整份工程 */
 function readView(raw: unknown, notes: string[]): ProjectView {
   const view = (raw ?? {}) as Partial<ProjectView>
-  const zoom = finiteOr(view.zoom, 8)
-  const panX = finiteOr(view.panX, 0)
-  const panY = finiteOr(view.panY, 0)
+  const rawZoom = finiteOr(view.zoom, 8)
+  const zoom = Math.min(MAX_VIEW_ZOOM, Math.max(MIN_VIEW_ZOOM, rawZoom))
+  const rawPanX = finiteOr(view.panX, 0)
+  const rawPanY = finiteOr(view.panY, 0)
+  const panX = Math.max(-MAX_VIEW_PAN, Math.min(MAX_VIEW_PAN, rawPanX))
+  const panY = Math.max(-MAX_VIEW_PAN, Math.min(MAX_VIEW_PAN, rawPanY))
   const showCodes = typeof view.showCodes === 'boolean' ? view.showCodes : true
   const clean =
     zoom === view.zoom && panX === view.panX && panY === view.panY && showCodes === view.showCodes
   if (!clean && raw !== undefined) notes.push('视图设置不规范，已修正')
-  return { zoom: zoom > 0 ? zoom : 8, panX, panY, showCodes }
+  return { zoom, panX, panY, showCodes }
 }
 
 /** 色号白名单：不存在的色号要剔除，否则 UI 上会出现“看得见却用不了”的色号 */
@@ -202,8 +211,9 @@ function readAllowedCodes(raw: unknown, paletteId: string, notes: string[]): str
   }
   const codes = getPalette(paletteId).colors.map((c) => c.code)
   const known = new Set(codes)
-  const kept = raw.filter((code): code is string => typeof code === 'string' && known.has(code))
-  if (kept.length !== raw.length) notes.push('可用色号名单里有不存在的色号，已剔除')
+  const input = raw.length > MAX_ALLOWED_CODES ? raw.slice(0, MAX_ALLOWED_CODES) : raw
+  const kept = [...new Set(input.filter((code): code is string => typeof code === 'string' && known.has(code)))]
+  if (input.length !== raw.length || kept.length !== raw.length) notes.push('可用色号名单里有不存在或重复的色号，已剔除')
   if (kept.length === 0 || kept.length === codes.length) return null
   return kept
 }
@@ -215,8 +225,9 @@ function readConversion(raw: unknown, notes: string[]): ConversionSettings | nul
     return null
   }
   const value = raw as Partial<ConversionSettings>
-  if (value.strategyId !== 'auto' && !Object.prototype.hasOwnProperty.call(STRATEGIES, String(value.strategyId))) {
-    notes.push(`转换策略“${String(value.strategyId)}”不存在，已重置转换参数`)
+  const strategyId = String(value.strategyId).slice(0, 80)
+  if (value.strategyId !== 'auto' && !Object.prototype.hasOwnProperty.call(STRATEGIES, strategyId)) {
+    notes.push(`转换策略“${strategyId}”不存在，已重置转换参数`)
     return null
   }
   const count = (v: unknown, fallback: number) =>
@@ -226,9 +237,12 @@ function readConversion(raw: unknown, notes: string[]): ConversionSettings | nul
     return Math.max(min, Math.min(max, n))
   }
   return {
-    strategyId: value.strategyId as ConversionSettings['strategyId'],
+    strategyId: strategyId as ConversionSettings['strategyId'],
     maxColors: count(value.maxColors, DEFAULT_SETTINGS.maxColors),
-    dither: value.dither === null || value.dither === undefined ? null : Math.max(0, finiteOr(value.dither, 0)),
+    dither:
+      value.dither === null || value.dither === undefined
+        ? null
+        : bounded(value.dither, DEFAULT_SETTINGS.dither ?? 0, 0, 1),
     cropToSubject: value.cropToSubject !== false,
     removeBackground: value.removeBackground === true,
     clearExisting: value.clearExisting !== false,
@@ -245,6 +259,12 @@ function readConversion(raw: unknown, notes: string[]): ConversionSettings | nul
  * 任一项不通过就明确报错，不静默修复（第 14.3 节）。
  */
 export function parseProject(text: string): ParseResult {
+  if (text.length > MAX_PROJECT_FILE_BYTES) {
+    return {
+      project: null,
+      error: { kind: 'fatal', message: `工程文件超过 ${MAX_PROJECT_FILE_BYTES / 1024 / 1024}MB 上限` },
+    }
+  }
   let raw: unknown
   try {
     raw = JSON.parse(text)
@@ -322,9 +342,16 @@ export function validateProject(raw: unknown): ParseResult {
   let restored: CellGrid
   try {
     if (typeof grid.data === 'string') {
-      // 工程文件：zlib + base64。给一个只比预期多 1 字节的输出缓冲：
-      // 解压炸弹最多只能撑到 expected + 1，多出来的那一格让长度检查把文件挡回去。
+      // 工程文件：zlib + base64。压缩流不可能比原始 U16 流大很多，先挡住异常长字符串。
       const expected = cells * 2
+      const maxEncoded = Math.ceil(expected * 4 / 3) + 256
+      if (grid.data.length > maxEncoded) {
+        return {
+          project: null,
+          error: { kind: 'fatal', message: '格子数据过大，文件可能被篡改' },
+        }
+      }
+      // 给一个只比预期多 1 字节的输出缓冲：解压炸弹最多只能撑到 expected + 1。
       const bytes = unzlibSync(fromBase64(grid.data), { out: new Uint8Array(expected + 1) })
       if (bytes.length !== expected) {
         return {
@@ -337,7 +364,19 @@ export function validateProject(raw: unknown): ParseResult {
       }
       restored = { cols: grid.cols, rows: grid.rows, cells: new Uint16Array(bytes.buffer, bytes.byteOffset, cells) }
     } else {
-      // IndexedDB：已经没有压缩这一层，直接拿数组
+      // IndexedDB：已经没有压缩这一层，先检查长度，避免为异常数组分配额外内存。
+      if (
+        (Array.isArray(grid.cells) || grid.cells instanceof Uint16Array) &&
+        grid.cells.length !== cells
+      ) {
+        return {
+          project: null,
+          error: {
+            kind: 'fatal',
+            message: `格子数据长度不对：期望 ${cells} 格，实际 ${grid.cells.length} 格`,
+          },
+        }
+      }
       restored = { cols: grid.cols, rows: grid.rows, cells: plainCells(grid.cells) }
     }
   } catch {
@@ -380,7 +419,9 @@ export function validateProject(raw: unknown): ParseResult {
   }
   const rawGap = (layout as Partial<BoardLayout>).gapMm
   const gapMm =
-    typeof rawGap === 'number' && Number.isFinite(rawGap) && rawGap >= 0 ? rawGap : 0
+    typeof rawGap === 'number' && Number.isFinite(rawGap) && rawGap >= 0 && rawGap <= 1000
+      ? rawGap
+      : 0
   if (rawGap !== undefined && gapMm !== rawGap) notes.push('板缝数值不规范，已改成 0')
   layout = { ...layout, gapMm }
   let geometry: BoardGeometry
@@ -413,12 +454,13 @@ export function validateProject(raw: unknown): ParseResult {
   if (typeof stored.paletteId !== 'string' || !stored.paletteId) {
     return { project: null, error: { kind: 'fatal', message: '工程没写色板 id' } }
   }
-  const palette = findPalette(stored.paletteId)
+  const paletteInput = stored.paletteId.slice(0, MAX_TEXT_FIELD_LENGTH)
+  const palette = findPalette(paletteInput)
   if (!palette) {
     // 不静默回退：换个色板，色号会全部对不上，必须拒绝这份工程。
     return {
       project: null,
-      error: { kind: 'fatal', message: `找不到色板：${stored.paletteId}` },
+      error: { kind: 'fatal', message: `找不到色板：${paletteInput}` },
     }
   }
   const paletteId = palette.id
@@ -440,9 +482,14 @@ export function validateProject(raw: unknown): ParseResult {
 
   const project: Project = {
     schemaVersion: PROJECT_SCHEMA_VERSION,
-    id: typeof stored.id === 'string' && stored.id ? stored.id : cryptoId(),
-    name: typeof stored.name === 'string' && stored.name.trim() ? stored.name : '未命名作品',
-    customer: typeof stored.customer === 'string' && stored.customer ? stored.customer : null,
+    id:
+      typeof stored.id === 'string' && stored.id.length <= MAX_TEXT_FIELD_LENGTH && stored.id
+        ? stored.id
+        : cryptoId(),
+    name:
+      typeof stored.name === 'string' && stored.name.trim()
+        ? stored.name.slice(0, MAX_TEXT_FIELD_LENGTH)
+        : '未命名作品',
     createdAt: isIsoDate(stored.createdAt) ? stored.createdAt : new Date().toISOString(),
     updatedAt: isIsoDate(stored.updatedAt) ? stored.updatedAt : new Date().toISOString(),
     layout,
@@ -495,7 +542,6 @@ export function createProject(options: {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     id: cryptoId(),
     name: options.name,
-    customer: null,
     createdAt: now,
     updatedAt: now,
     layout,

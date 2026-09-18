@@ -5,10 +5,9 @@
  * 只让这个脚本写这两个文件，永远不手改。
  * 用 `npm run build:palettes` 跑（Node 24 直接跑 TS，不用装 tsx）。
  *
- * 数据源许可证（都是可商用的）：
+ * 数据源许可证：
  *  - maxcleme/beadcolors         MIT        Perler / Hama / Artkal 全系 + symbol 符号字段
  *  - HansBug/pindou-color-data   MIT        MARD 221/291、COCO 291、漫漫 278、盼盼 289、咪小窝 290
- *  - pomodiary/bitbead.app       CC BY 4.0  跨品牌最近色（v1 不用，先存着）
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -306,11 +305,6 @@ async function main() {
         repo: 'HansBug/pindou-color-data',
         license: 'MIT',
         used: 'MARD 221/291、COCO 291、漫漫 278、盼盼 289、咪小窝 290',
-      },
-      {
-        repo: 'pomodiary/bitbead.app',
-        license: 'CC BY 4.0',
-        used: '跨品牌最近色对照表（v1 未使用，v2 再说）',
       },
     ],
     disclaimer:

@@ -79,8 +79,6 @@ export interface Clip {
   cols: number
   rows: number
   cells: Uint16Array
-  /** 复制时选区是非矩形并集时，框内没选中的格子填 EMPTY */
-  rects: Selection
 }
 
 /** 复制到剪贴板：取选区的外接框 */
@@ -101,7 +99,7 @@ export function copySelection(grid: CellGrid, sel: Selection): Clip | null {
         single || selectionContains(sel, gc, gr) ? grid.cells[cellIndex(grid, gc, gr)] : EMPTY
     }
   }
-  return { cols: w, rows: h, cells, rects: [clamped] }
+  return { cols: w, rows: h, cells }
 }
 
 /** 粘贴：左上角落在 (col, row)，越界部分裁掉 */

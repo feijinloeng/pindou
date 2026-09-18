@@ -3,9 +3,6 @@
  */
 export const zh = {
   loading: '正在加载…',
-  // 《非经营性互联网信息服务备案管理办法》要求在主页底部中央标明备案编号并链到工信部
-  icp: '粤ICP备2026075024号-1',
-
   nav: {
     library: '作品库',
   },
@@ -16,7 +13,7 @@ export const zh = {
     empty: '还没有作品。新建一个开始。',
     emptySearch: '没有找到和「{q}」相关的作品',
     clearSearch: '清空搜索',
-    searchPlaceholder: '搜作品名 / 客户',
+    searchPlaceholder: '搜作品名',
     tabProjects: '作品',
     tabTrash: '回收站',
     emptyTrash: '回收站是空的',
@@ -34,6 +31,9 @@ export const zh = {
     more: '更多',
     loading: '正在读本地作品库…',
     new: '新建',
+    importProject: '导入工程',
+    importFailed: '工程文件导入失败',
+    importTooLarge: '工程文件超过 32MB 上限',
     untitled: '未命名作品',
     namePlaceholder: '作品名',
     open: '打开',
@@ -50,7 +50,6 @@ export const zh = {
     writeFailed: '写本地作品库失败',
     retry: '重试',
     updatedAt: '更新于',
-    customerLabel: '客户',
     hasDraft: '有更新的草稿',
   },
 
@@ -159,6 +158,7 @@ export const zh = {
     midiPitch: '5 mm 针距',
     dragHint: '从这里拖一块板到画布；也可直接拖动画布中的板块微调。板块可以错位、留缺口、自由组合，只有实际面积重叠时不能放下。',
     removeThis: '移除这块',
+    removeConfirm: (count: number) => `移除这块板会丢失 ${count.toLocaleString()} 格已有内容，确定继续？`,
     emptyHint: '还没有放置画板',
   },
   crash: {

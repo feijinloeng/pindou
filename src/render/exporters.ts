@@ -190,7 +190,7 @@ export interface PreviewExportOptions {
   showCoords?: boolean
 }
 
-/** 预览图 PNG：给客户看效果、确认像不像 */
+/** 预览图 PNG：快速确认成品效果 */
 export async function buildPreviewPng(
   ctx: ExportContext,
   options: PreviewExportOptions,

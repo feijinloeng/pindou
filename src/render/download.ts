@@ -12,12 +12,23 @@ export function downloadBytes(bytes: Uint8Array, filename: string, mime: string)
   const link = document.createElement('a')
   link.href = url
   link.download = filename
+  document.body.append(link)
   link.click()
+  link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 export function safeName(name: string): string {
-  return (name || '作品').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)
+  const cleaned = name
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .split('')
+    .map((char) => {
+      const code = char.charCodeAt(0)
+      return code < 32 || code === 127 || code === 0x2028 || code === 0x2029 ? '_' : char
+    })
+    .join('')
+  return (cleaned || '作品').slice(0, 60)
 }
 
 /** 导出包内主文件的统一命名：编号 + 作品名 + 输出类型。 */

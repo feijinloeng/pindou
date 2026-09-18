@@ -32,7 +32,6 @@ export interface CachedImage {
 export interface ProjectIndex {
   id: string
   name: string
-  customer: string | null
   createdAt: string
   updatedAt: string
   paletteId: string
@@ -53,7 +52,6 @@ function indexFor(project: Project): ProjectIndex {
   return {
     id: project.id,
     name: project.name,
-    customer: project.customer,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     paletteId: project.paletteId,
@@ -71,7 +69,6 @@ function isIndex(record: unknown): record is ProjectIndex {
     !('invalid' in value) &&
     typeof value.id === 'string' &&
     typeof value.name === 'string' &&
-    (typeof value.customer === 'string' || value.customer === null) &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
     typeof value.paletteId === 'string' &&

@@ -12,11 +12,6 @@
       "repo": "HansBug/pindou-color-data",
       "license": "MIT",
       "used": "MARD 221/291、COCO 291、漫漫 278、盼盼 289、咪小窝 290"
-    },
-    {
-      "repo": "pomodiary/bitbead.app",
-      "license": "CC BY 4.0",
-      "used": "跨品牌最近色对照表（v1 未使用，v2 再说）"
     }
   ],
   "disclaimer": "内置色表来自社区屏幕参考数据。显示器、光线、豆子批次和相机配置都会影响实际观感；需要生产级配色时，请使用品牌实体色卡或校准后的自定义色表。",

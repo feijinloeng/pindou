@@ -28,7 +28,7 @@ import {
   paperLayout,
   planAnnotations,
 } from '../../src/render/documentLayout.ts'
-import { exportFilename } from '../../src/render/download.ts'
+import { exportFilename, safeName } from '../../src/render/download.ts'
 import { createPdfSink } from '../../src/render/pdf.ts'
 import {
   createProject,
@@ -143,6 +143,7 @@ function fill(g: ReturnType<typeof grid>, index: number, value = 0) {
 assert.equal(exportFilename(1, '春日作品', '预览图', 'png'), '1.春日作品（预览图）.png')
 assert.equal(exportFilename(2, '春日作品', '矢量版', 'pdf'), '2.春日作品（矢量版）.pdf')
 assert.equal(exportFilename(3, '春日作品', '打印版', 'pdf'), '3.春日作品（打印版）.pdf')
+assert.equal(safeName('  a/b\n'), 'a_b')
 
 // jsPDF receives user text raw; its own escaping must handle parentheses and backslashes once.
 {
@@ -290,6 +291,14 @@ assert.equal(mardLabel, 'MARD（曼德） 221（221/221 有色值）')
   assert.deepEqual(parseProject(serializeProject(withConversion)).project?.conversion, withConversion.conversion)
   const badGap = { ...project, layout: { ...layout, gapMm: -1 } }
   assert.equal(validateProject(badGap).project?.layout.gapMm, 0)
+  const hostile = JSON.parse(serialized) as Record<string, unknown>
+  hostile.view = { zoom: 1e99, panX: 1e99, panY: -1e99, showCodes: true }
+  hostile.conversion = { ...DEFAULT_SETTINGS, dither: 1e99 }
+  const recovered = validateProject(hostile)
+  assert.equal(recovered.project?.view.zoom, 64)
+  assert.equal(recovered.project?.view.panX, 10_000_000)
+  assert.equal(recovered.project?.conversion?.dither, 1)
+  assert.equal(validateProject({ ...project, layout: { placements: Array.from({ length: 8_001 }, () => ({ board: 'mini26', col: 0, row: 0 })), gapMm: 0 } }).project, null)
 
   // A tiny zlib stream that inflates far past the declared grid must be rejected,
   // and must not inflate past declared size + 1 byte while checking (decompression bomb guard).

@@ -29,6 +29,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
     if (!error) return this.props.children
     const copy = t('crash')
     const dev = import.meta.env?.DEV === true
+    const diagnostics = dev ? `${error.name}: ${error.message}\n${error.stack ?? ''}` : `${error.name}: ${copy.title}`
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <h1 className="text-base font-semibold">{copy.title}</h1>
@@ -54,9 +55,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
             type="button"
             className="rounded border border-neutral-300 px-3 py-1.5 text-sm"
             onClick={() => {
-              void navigator.clipboard
-                ?.writeText(`${error.name}: ${error.message}\n${error.stack ?? ''}`)
-                .catch(() => undefined)
+              void navigator.clipboard?.writeText(diagnostics).catch(() => undefined)
             }}
           >
             {copy.copyDiagnostics}

@@ -141,7 +141,25 @@ export async function run(): Promise<string> {
   useEditor.getState().newProject()
   await useEditor.getState().importImage(new File(['invalid'], 'test.png', { type: 'image/png' }))
   assert(useEditor.getState().sourceImage === null && !useEditor.getState().converting, 'An empty layout must reject image import before decoding.')
-  results.push('PASS: empty-layout image guard')
+  const originalConfirm = window.confirm
+  try {
+    const shifted = project('Layout shift')
+    useEditor.getState().loadProject(shifted, false)
+    paint(1)
+    assert(!useEditor.getState().addBoard('mini26', -26, 0), 'Adding a board should accept a negative drop coordinate.')
+    assert(useEditor.getState().grid.cells[26] === 1 && useEditor.getState().grid.cells[0] === EMPTY, 'Normalizing board coordinates must move existing beads with the boards.')
+    useEditor.getState().loadProject(project('Remove guard'), false)
+    paint(1)
+    window.confirm = () => false
+    useEditor.getState().removeBoard(0)
+    assert(useEditor.getState().layout.placements.length === 1 && useEditor.getState().grid.cells[0] === 1, 'Cancelling board removal must preserve content.')
+    window.confirm = () => true
+    useEditor.getState().removeBoard(0)
+    assert(useEditor.getState().layout.placements.length === 0, 'Confirmed board removal should complete.')
+  } finally {
+    window.confirm = originalConfirm
+  }
+  results.push('PASS: negative board normalization preserves beads and removal confirms data loss')
 
   useEditor.getState().loadProject((await db.getProject(id))!)
   paint(5)

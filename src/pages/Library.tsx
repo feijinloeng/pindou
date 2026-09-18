@@ -5,7 +5,10 @@ import { getPalette } from '../data/palettes'
 import { deriveLayoutGeometry } from '../domain/board'
 import {
   createProject,
+  cryptoId,
+  MAX_PROJECT_FILE_BYTES,
   normalizeGridForLayout,
+  parseProject,
   serializeProject,
 } from '../domain/project'
 import { useEditor } from '../editor/store'
@@ -56,6 +59,7 @@ export default function Library({
   const [tab, setTab] = useState<Tab>('projects')
   const [newOpen, setNewOpen] = useState(false)
   const [details, setDetails] = useState<ProjectIndex | null>(null)
+  const importRef = useRef<HTMLInputElement>(null)
   const copy = t('library')
 
   const refresh = useCallback(() => {
@@ -121,10 +125,9 @@ export default function Library({
         paletteId: project.paletteId,
         grid: normalizeGridForLayout(project.grid, deriveLayoutGeometry(project.layout)).grid,
       })
-      // 副本是“完整副本”：客户、色号白名单、转换参数都跟着走
+      // 副本保留色号白名单和转换参数。
       await putProject({
         ...clone,
-        customer: project.customer,
         allowedCodes: project.allowedCodes,
         conversion: project.conversion,
       })
@@ -133,7 +136,7 @@ export default function Library({
 
   const rename = (entry: LibraryEntry) =>
     runWrite(async () => {
-      const next = window.prompt(copy.renamePrompt, cleanName(entry.project.name))?.trim()
+      const next = window.prompt(copy.renamePrompt, cleanName(entry.project.name))?.trim().slice(0, 200)
       if (!next) return
       const id = entry.project.id
       const editor = useEditor.getState()
@@ -171,6 +174,25 @@ export default function Library({
       )
     })
 
+  const importProject = (file: File) =>
+    runWrite(async () => {
+      if (file.size > MAX_PROJECT_FILE_BYTES) {
+        throw new Error(copy.importTooLarge)
+      }
+      const result = parseProject(await file.text())
+      if (!result.project) throw new Error(result.error?.message ?? copy.importFailed)
+      const recoveryNote = result.error?.kind === 'recovered' ? result.error.message : null
+      await putProject({
+        ...result.project,
+        id: cryptoId(),
+        updatedAt: new Date().toISOString(),
+      })
+      await refresh()
+      if (recoveryNote) setError(recoveryNote)
+    })
+
+  const triggerImport = () => importRef.current?.click()
+
   // 本地搜索 + 按更新时间排序 + 作品/回收站分栏。都不改写盘数据。
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -179,10 +201,7 @@ export default function Library({
         const deleted = entry.project.name.startsWith(TRASH_PREFIX)
         if (tab === 'trash' ? !deleted : deleted) return false
         if (!needle) return true
-        return (
-          cleanName(entry.project.name).toLowerCase().includes(needle) ||
-          (entry.project.customer ?? '').toLowerCase().includes(needle)
-        )
+        return cleanName(entry.project.name).toLowerCase().includes(needle)
       })
       .sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
   }, [entries, query, tab])
@@ -229,6 +248,7 @@ export default function Library({
             <Plus size={14} aria-hidden />
             {copy.new}
           </Btn>
+          <Btn onClick={triggerImport} disabled={busy}>{copy.importProject}</Btn>
         </div>
       </div>
 
@@ -294,10 +314,13 @@ export default function Library({
           ) : (
             <>
               <p className="text-sm text-ink-2">{copy.empty}</p>
-              <Btn variant="primary" onClick={() => setNewOpen(true)}>
-                <Plus size={14} aria-hidden />
-                {copy.new}
-              </Btn>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Btn variant="primary" onClick={() => setNewOpen(true)}>
+                  <Plus size={14} aria-hidden />
+                  {copy.new}
+                </Btn>
+                <Btn onClick={triggerImport}>{copy.importProject}</Btn>
+              </div>
             </>
           )}
         </div>
@@ -306,9 +329,10 @@ export default function Library({
       )}
 
       {embedded && (
-        <div className="flex gap-1" role="group" aria-label={copy.title}>
+        <div className="flex flex-wrap gap-1" role="group" aria-label={copy.title}>
           <Btn active={tab === 'projects'} onClick={() => setTab('projects')}>{copy.tabProjects}</Btn>
           <Btn active={tab === 'trash'} onClick={() => setTab('trash')}>{copy.tabTrash}</Btn>
+          <Btn onClick={triggerImport} disabled={busy}>{copy.importProject}</Btn>
         </div>
       )}
       {error && (
@@ -357,12 +381,18 @@ export default function Library({
       </div>
 
       {!embedded && <NewProjectDialog open={newOpen} onClose={() => setNewOpen(false)} />}
+      <input
+        ref={importRef}
+        type="file"
+        accept=".json,.pindou.json,application/json"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (file) void importProject(file)
+        }}
+      />
       <ProjectDetails project={details} onClose={() => setDetails(null)} />
-      <footer className="mt-auto pt-2 text-center text-xs text-ink-2">
-        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">
-          {t('icp')}
-        </a>
-      </footer>
     </div>
   )
 }
@@ -578,7 +608,6 @@ function ProjectDetails({ project, onClose }: { project: ProjectIndex | null; on
   if (!project || !summary) return null
   const rows: Array<[string, string]> = [
     [copy.namePlaceholder, cleanName(project.name)],
-    [copy.customerLabel, project.customer ?? '—'],
     [copy.cells, summary.cells.toLocaleString()],
     [copy.beads, summary.beads.toLocaleString()],
     [copy.colorsUsed, `${summary.colorCount}`],

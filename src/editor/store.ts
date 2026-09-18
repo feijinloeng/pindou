@@ -10,7 +10,7 @@ import {
   type BoardTypeId,
   WARN_CELLS,
 } from '../domain/board'
-import { EMPTY, type CellGrid, createGrid, inBounds } from '../domain/grid'
+import { EMPTY, type CellGrid, createGrid, inBounds, lostCells } from '../domain/grid'
 import { type Palette } from '../domain/palette'
 import {
   allowedMask,
@@ -73,7 +73,6 @@ export interface EditorState {
   /** 画布上的自由摆放板列表 */
   layout: BoardLayout
   projectId: string
-  customer: string | null
   createdAt: string
   /** 上次保存时间（界面显示"已保存"用） */
   savedAt: string | null
@@ -112,7 +111,11 @@ export interface EditorState {
   converting: boolean
   progress: { stage: string; ratio: number } | null
   /** 立即应用自由摆放的板块；keepContent=false 时清空画布 */
-  applyLayout(layout: BoardLayout, keepContent?: boolean): string | null
+  applyLayout(
+    layout: BoardLayout,
+    keepContent?: boolean,
+    contentShift?: { col: number; row: number },
+  ): string | null
   addBoard(board: BoardTypeId, col: number, row: number): string | null
   moveBoard(index: number, col: number, row: number): string | null
   removeBoard(index: number): string | null
@@ -256,7 +259,6 @@ export const useEditor = create<EditorState>((set, get) => ({
   name: '未命名作品',
   layout: initial.layout,
   projectId: 'local-draft',
-  customer: null,
   panel: null,
   colorPinned: false,
   // 排板是连续操作：默认保持面板打开，用户仍可手动取消钉住来恢复一次性添加。
@@ -292,7 +294,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   converting: false,
   progress: null,
 
-  applyLayout(layout, keepContent = true) {
+  applyLayout(layout, keepContent = true, contentShift = { col: 0, row: 0 }) {
     let geom: BoardGeometry
     try {
       geom = deriveLayoutGeometry(layout)
@@ -303,14 +305,17 @@ export const useEditor = create<EditorState>((set, get) => ({
     const state = get()
     const previous = state.grid
     const next = createGrid(geom.cols, geom.rows, EMPTY, geom.placeable)
-    // 默认保留坐标不变的内容：换板阵不该毁掉已经拼好的部分
+    // 默认保留坐标不变的内容；板块整体归一化时，内容也要跟着坐标移动。
     if (keepContent) {
-      const copyCols = Math.min(previous.cols, geom.cols)
-      const copyRows = Math.min(previous.rows, geom.rows)
+      const copyCols = Math.min(previous.cols + Math.max(0, contentShift.col), geom.cols)
+      const copyRows = Math.min(previous.rows + Math.max(0, contentShift.row), geom.rows)
       for (let r = 0; r < copyRows; r++) {
         for (let c = 0; c < copyCols; c++) {
           if (!inBounds(next, c, r)) continue
-          const value = previous.cells[r * previous.cols + c]
+          const sourceCol = c - contentShift.col
+          const sourceRow = r - contentShift.row
+          if (!inBounds(previous, sourceCol, sourceRow)) continue
+          const value = previous.cells[sourceRow * previous.cols + sourceCol]
           if (value !== EMPTY) next.cells[r * next.cols + c] = value
         }
       }
@@ -356,10 +361,14 @@ export const useEditor = create<EditorState>((set, get) => ({
       row: Math.round(Number.isFinite(row) ? row : 0),
     }
     const normalized = shiftPlacements([...state.layout.placements, requested])
-    const failure = get().applyLayout({
-      placements: normalized.placements,
-      gapMm: state.layout.gapMm,
-    })
+    const failure = get().applyLayout(
+      {
+        placements: normalized.placements,
+        gapMm: state.layout.gapMm,
+      },
+      true,
+      normalized,
+    )
     if (!failure && (normalized.col || normalized.row)) preserveWorldPosition(set, get, normalized)
     return failure
   },
@@ -377,10 +386,14 @@ export const useEditor = create<EditorState>((set, get) => ({
     const normalized = shiftPlacements(
       state.layout.placements.map((placement, i) => (i === index ? next : placement)),
     )
-    const failure = get().applyLayout({
-      placements: normalized.placements,
-      gapMm: state.layout.gapMm,
-    })
+    const failure = get().applyLayout(
+      {
+        placements: normalized.placements,
+        gapMm: state.layout.gapMm,
+      },
+      true,
+      normalized,
+    )
     if (!failure && (normalized.col || normalized.row)) preserveWorldPosition(set, get, normalized)
     return failure
   },
@@ -388,10 +401,18 @@ export const useEditor = create<EditorState>((set, get) => ({
   removeBoard(index) {
     const state = get()
     if (index < 0 || index >= state.layout.placements.length) return null
-    return get().applyLayout({
+    const nextLayout = {
       placements: state.layout.placements.filter((_, i) => i !== index),
       gapMm: state.layout.gapMm,
-    })
+    }
+    const nextGeometry = deriveLayoutGeometry(nextLayout)
+    const lost = lostCells(state.grid, nextGeometry)
+    if (lost > 0) {
+      const message = t('picker').removeConfirm(lost)
+      if (typeof window === 'undefined') return message
+      if (!window.confirm(message)) return null
+    }
+    return get().applyLayout(nextLayout)
   },
 
   openPanel(panel) {
@@ -427,7 +448,6 @@ export const useEditor = create<EditorState>((set, get) => ({
       schemaVersion: 1,
       id: state.projectId,
       name: state.name,
-      customer: state.customer,
       createdAt: state.createdAt,
       // Keep successive saves ordered even within one millisecond.
       updatedAt: new Date(Math.max(Date.now(), Date.parse(state.savedAt ?? state.createdAt) + 1)).toISOString(),
@@ -516,7 +536,6 @@ export const useEditor = create<EditorState>((set, get) => ({
     set({
       name: project.name,
       projectId: project.id,
-      customer: project.customer,
       createdAt: project.createdAt,
       layout,
       geom,

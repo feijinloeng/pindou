@@ -3,7 +3,7 @@ import { EMPTY, isPlaceable, type CellGrid } from '../domain/grid'
 import { type Palette } from '../domain/palette'
 
 /**
- * 预览图（第 11.1 节）：给客户看"像不像"的普通位图。
+ * 预览图：用于快速查看成品效果的普通位图。
  * 每格直接填满色块，避免高像素预览中密集圆豆和豆孔造成视觉噪点。
  */
 export const PREVIEW_SCALES = { standard: 8, hd: 16, print: 32 } as const

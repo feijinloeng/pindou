@@ -59,6 +59,7 @@ export default function NewProjectDialog({
           <input
             className={INPUT_CLS}
             value={name}
+            maxLength={200}
             onChange={(e) => setName(e.target.value)}
             placeholder={copy.untitled}
           />

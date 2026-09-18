@@ -32,6 +32,9 @@ export function findBoardProfile(id: unknown): BoardProfile | null {
 
 /** 画布上限：约 2236²，5.8m × 5.8m @2.6mm */
 export const MAX_CELLS = 5_000_000
+/** 最小板型为 26×26；超过这个数量不可能在画布上合法排下。 */
+const MAX_PLACEMENTS = 8_000
+const PLACEMENT_BUCKET_SIZE = 104
 /** 超过这个数提示用户"建议改用 5mm 豆" */
 export const WARN_CELLS = 1_500_000
 
@@ -163,6 +166,44 @@ function boardPlacementsOverlap(
   )
 }
 
+/**
+ * 找重叠板块。板块最长 104 格，按 104×104 桶筛候选，避免外部工程触发 O(n²) 全扫描。
+ * 真正相交的两个矩形一定会落在至少一个相同桶里。
+ */
+function findPlacementOverlap(
+  placements: BoardPlacement[],
+): { first: BoardPlacement; second: BoardPlacement } | null {
+  const buckets = new Map<string, number[]>()
+  for (let index = 0; index < placements.length; index++) {
+    const placement = placements[index]
+    const pegs = findBoardProfile(placement.board)!.pegs
+    const col0 = Math.floor(placement.col / PLACEMENT_BUCKET_SIZE)
+    const row0 = Math.floor(placement.row / PLACEMENT_BUCKET_SIZE)
+    const col1 = Math.floor((placement.col + pegs - 1) / PLACEMENT_BUCKET_SIZE)
+    const row1 = Math.floor((placement.row + pegs - 1) / PLACEMENT_BUCKET_SIZE)
+    const candidates = new Set<number>()
+    for (let row = row0; row <= row1; row++) {
+      for (let col = col0; col <= col1; col++) {
+        for (const candidate of buckets.get(`${col},${row}`) ?? []) candidates.add(candidate)
+      }
+    }
+    for (const candidate of candidates) {
+      if (boardPlacementsOverlap(placements[candidate], placement)) {
+        return { first: placements[candidate], second: placement }
+      }
+    }
+    for (let row = row0; row <= row1; row++) {
+      for (let col = col0; col <= col1; col++) {
+        const key = `${col},${row}`
+        const bucket = buckets.get(key)
+        if (bucket) bucket.push(index)
+        else buckets.set(key, [index])
+      }
+    }
+  }
+  return null
+}
+
 /** 只检查一个候选位置和其它板，供拖动预览使用。 */
 export function boardPlacementOverlapsOthers(
   placements: BoardPlacement[],
@@ -185,6 +226,7 @@ export type BoardLayoutError =
   | { kind: 'bad-placement'; placement: BoardPlacement }
   | { kind: 'mixed-pitch'; pitches: number[] }
   | { kind: 'overlap'; first: BoardPlacement; second: BoardPlacement }
+  | { kind: 'too-many-boards'; count: number; max: number }
   | SizeError
 
 /** 矩阵板阵 → 自由摆放列表（老工程和预设走这条路） */
@@ -206,7 +248,7 @@ export function describeLayoutError(err: BoardLayoutError): string {
     case 'empty':
       return '还没放板子：先在左边点一个型号，拖到中间的台面上'
     case 'unknown-board':
-      return `不认识这个板型：${err.board}`
+      return `不认识这个板型：${err.board.slice(0, 80)}`
     case 'bad-placement':
       return `板的位置必须是整数格坐标：col ${err.placement.col} / row ${err.placement.row}`
     case 'bad-size':
@@ -215,6 +257,8 @@ export function describeLayoutError(err: BoardLayoutError): string {
       return `不能混用不同针距的板：${err.pitches.map((p) => `${p}mm`).join(' / ')}`
     case 'overlap':
       return '这两块板叠在一起了，挪开一点'
+    case 'too-many-boards':
+      return `板块数量 ${err.count.toLocaleString()} 超过上限 ${err.max.toLocaleString()}`
     case 'too-large':
       return `拼出来是 ${err.cols} × ${err.rows} = ${(err.cols * err.rows).toLocaleString()} 格，超过上限 ${err.max.toLocaleString()} 格`
   }
@@ -228,6 +272,9 @@ export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
   const placements = layout?.placements
   if (!Array.isArray(placements)) return { kind: 'empty' }
   if (placements.length === 0) return null
+  if (placements.length > MAX_PLACEMENTS) {
+    return { kind: 'too-many-boards', count: placements.length, max: MAX_PLACEMENTS }
+  }
 
   let cols = 0
   let rows = 0
@@ -246,15 +293,8 @@ export function validateLayout(layout: BoardLayout): BoardLayoutError | null {
     cols = Math.max(cols, col + profile.pegs)
     rows = Math.max(rows, row + profile.pegs)
   }
-  for (let i = 0; i < placements.length; i++) {
-    const first = placements[i]
-    for (let j = i + 1; j < placements.length; j++) {
-      const second = placements[j]
-      if (boardPlacementsOverlap(first, second)) {
-        return { kind: 'overlap', first, second }
-      }
-    }
-  }
+  const overlap = findPlacementOverlap(placements)
+  if (overlap) return { kind: 'overlap', ...overlap }
   if (pitches.size > 1) return { kind: 'mixed-pitch', pitches: [...pitches] }
 
   return checkCanvasCells(cols, rows)
@@ -353,6 +393,7 @@ export type BoardArrayError =
   | { kind: 'empty' }
   | { kind: 'unknown-board'; board: string }
   | { kind: 'ragged'; row: number }
+  | { kind: 'too-many-boards'; count: number; max: number }
   | { kind: 'mixed-pitch'; pitches: number[] }
   | { kind: 'row-mismatch'; row: number; expected: number; got: number }
   | { kind: 'row-height-mismatch'; row: number; col: number }
@@ -387,8 +428,13 @@ export function validateBoardArray(array: BoardArray): BoardArrayError | null {
     if (!Array.isArray(rows[r])) return { kind: 'ragged', row: r }
   }
   if (rows.every((row) => row.length === 0)) return { kind: 'empty' }
+  let boardCount = 0
   for (let r = 0; r < rows.length; r++) {
     if (rows[r].length === 0) return { kind: 'ragged', row: r }
+    boardCount += rows[r].length
+    if (boardCount > MAX_PLACEMENTS) {
+      return { kind: 'too-many-boards', count: boardCount, max: MAX_PLACEMENTS }
+    }
     for (const id of rows[r]) {
       if (!findBoardProfile(id)) return { kind: 'unknown-board', board: String(id) }
     }
@@ -428,9 +474,11 @@ export function describeBoardArrayError(err: BoardArrayError): string {
     case 'empty':
       return '板阵是空的'
     case 'unknown-board':
-      return `不认识这个板型：${err.board}`
+      return `不认识这个板型：${err.board.slice(0, 80)}`
     case 'ragged':
       return `第 ${err.row + 1} 行是空的或者不是板型数组`
+    case 'too-many-boards':
+      return `板块数量 ${err.count.toLocaleString()} 超过上限 ${err.max.toLocaleString()}`
     case 'bad-size':
       return `板阵尺寸不合法：${err.cols} × ${err.rows}`
     case 'mixed-pitch':
