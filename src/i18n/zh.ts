@@ -72,6 +72,7 @@ export const zh = {
     transformTitle: '整图变换',
     transformMove: '整图平移一格',
     transformSquareOnly: '旋转 90° 需要正方形画布；非正方形请先框一个正方形选区旋转',
+    transformDiscard: (count: number) => `这个变换会让 ${count.toLocaleString()} 格内容落到板外或板缝中，确定继续？`,
     toolPencil: '画笔',
     toolPencilHint: '拖拽连续落色',
     toolEraser: '透明橡皮',
@@ -132,6 +133,8 @@ export const zh = {
     transparentThresholdHint: '数值越大，清除的边缘杂色越多',
     rerun: '重新转换',
     adjusting: '调整后会自动重新生成豆格图案',
+    dimensionsUnknown: '无法在解码前确认图片尺寸，请先另存为 PNG、JPEG、WebP 或 GIF 再导入。',
+    resizeUnsupported: '当前浏览器无法安全缩小这张大图，请先压缩或裁小后再导入。',
   },
 
   export: {
@@ -153,10 +156,20 @@ export const zh = {
   picker: {
     miniPitch: '2.6 mm 针距',
     midiPitch: '5 mm 针距',
-    dragHint: '从这里拖一块板到画布；也可直接拖动画布中的板块微调。板块可以错位、留缺口、自由组合，只有实际面积重叠时不能放下。',
+    dragHint: '点选板型后，点画布即可放置；也可以拖动板型卡。已放置的板可拖动微调，键盘可用方向键移动。按住空格或中键拖动画布。板块可以错位、留缺口、自由组合，只有实际面积重叠时不能放下。',
+    moveConfirm: (count: number) => `移动这块板会丢失 ${count.toLocaleString()} 格已有内容，确定继续？`,
     removeThis: '移除这块',
     removeConfirm: (count: number) => `移除这块板会丢失 ${count.toLocaleString()} 格已有内容，确定继续？`,
     emptyHint: '还没有放置画板',
+    placed: (count: number) => `已放置 ${count} 块`,
+  },
+
+  canvas: {
+    ariaLabel: '豆格画布：方向键移动光标，Enter 应用当前工具；打开画板面板时，Enter 放置选中的底板',
+    keyboardHelp: '方向键移动光标，按住 Shift 加方向键一次跳 5 格，Enter 把当前工具用在光标那一格上。Cmd 或 Ctrl 加 Z 撤销，B/E/I/G/M/H 切换工具。打开画板面板后，点选板型，再点画布放置；也可拖动板型卡。用 Tab 回到画布并按 Enter 放置选中的板型；拖动或用方向键调整选中的板块，Delete 或 Backspace 删除板块。',
+    cellStatus: (row: number, col: number, code: string | null) =>
+      `第 ${row + 1} 行 第 ${col + 1} 列，${code ? `色号 ${code}` : '空格'}`,
+    notFocused: '画布未聚焦',
   },
   crash: {
     title: '界面出错了',

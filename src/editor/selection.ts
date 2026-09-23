@@ -90,16 +90,90 @@ export function copySelection(grid: CellGrid, sel: Selection): Clip | null {
   const w = rectWidth(clamped)
   const h = rectHeight(clamped)
   const cells = new Uint16Array(w * h)
-  const single = sel.length === 1
+  cells.fill(EMPTY)
+  const regions = sel
+    .map((rect) => clampRectTo(grid, rect))
+    .filter((rect): rect is Rect => rect !== null)
   for (let row = 0; row < h; row++) {
-    for (let col = 0; col < w; col++) {
-      const gc = clamped.c0 + col
-      const gr = clamped.r0 + row
-      cells[row * w + col] =
-        single || selectionContains(sel, gc, gr) ? grid.cells[cellIndex(grid, gc, gr)] : EMPTY
+    const gridRow = clamped.r0 + row
+    const intervals = regions
+      .filter((rect) => gridRow >= rect.r0 && gridRow <= rect.r1)
+      .map((rect) => [rect.c0, rect.c1] as const)
+      .sort((a, b) => a[0] - b[0])
+    let start: number | null = null
+    let end = -1
+    const copyInterval = () => {
+      if (start === null) return
+      const source = gridRow * grid.cols + start
+      const target = row * w + start - clamped.c0
+      cells.set(grid.cells.subarray(source, source + end - start + 1), target)
     }
+    for (const [c0, c1] of intervals) {
+      if (start === null) {
+        start = c0
+        end = c1
+      } else if (c0 <= end + 1) {
+        end = Math.max(end, c1)
+      } else {
+        copyInterval()
+        start = c0
+        end = c1
+      }
+    }
+    copyInterval()
   }
   return { cols: w, rows: h, cells }
+}
+
+/** Count occupied cells a mirror would move into a gap in an irregular layout. */
+export function countMirrorLoss(grid: CellGrid, rect: Rect, axis: 'h' | 'v'): number {
+  const clipped = clampRectTo(grid, rect)
+  if (!clipped) return 0
+  const width = rectWidth(clipped)
+  const height = rectHeight(clipped)
+  let lost = 0
+  for (let row = clipped.r0; row <= clipped.r1; row++) {
+    for (let col = clipped.c0; col <= clipped.c1; col++) {
+      if (!inBounds(grid, col, row) || grid.cells[cellIndex(grid, col, row)] === EMPTY) continue
+      const targetCol = axis === 'h' ? clipped.c0 + width - 1 - (col - clipped.c0) : col
+      const targetRow = axis === 'v' ? clipped.r0 + height - 1 - (row - clipped.r0) : row
+      if (!inBounds(grid, targetCol, targetRow)) lost++
+    }
+  }
+  return lost
+}
+
+/** Count occupied cells a quarter-turn would move into a gap in an irregular layout. */
+export function countRotateLoss(grid: CellGrid, rect: Rect, dir: 1 | -1): number {
+  const clipped = clampRectTo(grid, rect)
+  if (!clipped) return 0
+  const width = rectWidth(clipped)
+  const height = rectHeight(clipped)
+  if (width !== height) return 0
+  let lost = 0
+  for (let row = clipped.r0; row <= clipped.r1; row++) {
+    for (let col = clipped.c0; col <= clipped.c1; col++) {
+      if (!inBounds(grid, col, row) || grid.cells[cellIndex(grid, col, row)] === EMPTY) continue
+      const localCol = col - clipped.c0
+      const localRow = row - clipped.r0
+      const targetCol = clipped.c0 + (dir === 1 ? height - 1 - localRow : localRow)
+      const targetRow = clipped.r0 + (dir === 1 ? localCol : width - 1 - localCol)
+      if (!inBounds(grid, targetCol, targetRow)) lost++
+    }
+  }
+  return lost
+}
+
+/** Count occupied cells that a translation would move outside the usable board area. */
+export function countTranslateLoss(grid: CellGrid, dc: number, dr: number): number {
+  let lost = 0
+  for (let row = 0; row < grid.rows; row++) {
+    for (let col = 0; col < grid.cols; col++) {
+      if (!inBounds(grid, col, row) || grid.cells[cellIndex(grid, col, row)] === EMPTY) continue
+      if (!inBounds(grid, col + dc, row + dr)) lost++
+    }
+  }
+  return lost
 }
 
 /** 粘贴：左上角落在 (col, row)，越界部分裁掉 */

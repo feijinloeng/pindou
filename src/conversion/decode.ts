@@ -1,4 +1,6 @@
 import { DEFAULT_DECODE_LIMITS, limitScale, type DecodeLimits, type SourceImage } from './types'
+import { readImageDimensions } from './imageDimensions'
+import { t } from '../i18n/zh'
 
 /**
  * 在主线程解码图片并缩到上限内，然后把像素交给 Worker。
@@ -24,8 +26,32 @@ export async function decodeImageFile(
     throw new Error(`这个文件不是图片（${type}）`)
   }
 
-  const bitmap = await createImageBitmap(file)
+  const dimensions = await readImageDimensions(file)
+  if (!dimensions) throw new Error(t('convert').dimensionsUnknown)
+  const target = limitScale(dimensions.width, dimensions.height, limits)
+  const needsResize = target.scale < 1
+  let bitmap: ImageBitmap
   try {
+    bitmap = needsResize
+      ? await createImageBitmap(file, {
+          ...(dimensions.width >= dimensions.height
+            ? { resizeWidth: target.width }
+            : { resizeHeight: target.height }),
+          resizeQuality: 'high',
+        })
+      : await createImageBitmap(file)
+  } catch (error) {
+    if (needsResize) throw new Error(t('convert').resizeUnsupported, { cause: error })
+    throw error
+  }
+  try {
+    if (
+      bitmap.width > limits.maxSidePx ||
+      bitmap.height > limits.maxSidePx ||
+      bitmap.width * bitmap.height > limits.maxTotalPx
+    ) {
+      throw new Error(t('convert').resizeUnsupported)
+    }
     const { width, height } = limitScale(bitmap.width, bitmap.height, limits)
     const canvas =
       typeof OffscreenCanvas !== 'undefined'

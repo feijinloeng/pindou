@@ -131,6 +131,13 @@ export function openDb(): Promise<IDBDatabase> {
   if (!openPromise) {
     openPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION)
+      let settled = false
+      const fail = (error: Error) => {
+        if (settled) return
+        settled = true
+        openPromise = null
+        reject(error)
+      }
       request.onupgradeneeded = (event) => {
         const database = request.result
         const transaction = request.transaction
@@ -146,15 +153,21 @@ export function openDb(): Promise<IDBDatabase> {
       }
       request.onsuccess = () => {
         const database = request.result
+        if (settled) {
+          // A blocked request may eventually open after its promise has already failed.
+          database.close()
+          return
+        }
+        settled = true
         database.onversionchange = () => {
           database.close()
           openPromise = null
         }
         resolve(database)
       }
+      request.onblocked = () => fail(new Error(t('storage').blocked))
       request.onerror = () => {
-        openPromise = null
-        reject(request.error ?? new Error('打不开本地数据库'))
+        fail(request.error ?? new Error('打不开本地数据库'))
       }
     })
   }

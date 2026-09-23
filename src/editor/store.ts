@@ -10,7 +10,7 @@ import {
   type BoardTypeId,
   WARN_CELLS,
 } from '../domain/board'
-import { EMPTY, type CellGrid, createGrid, inBounds, lostCells } from '../domain/grid'
+import { EMPTY, type CellGrid, createGrid, inBounds, lostCells, lostCellsAfterShift } from '../domain/grid'
 import { type Palette } from '../domain/palette'
 import {
   allowedMask,
@@ -24,6 +24,9 @@ import { EDITOR_FIT_PAD, fitViewport, type Viewport } from '../render/canvasView
 import { History, PatchRecorder, type CellPatch, type HistoryMeta } from './history'
 import {
   copySelection,
+  countMirrorLoss,
+  countRotateLoss,
+  countTranslateLoss,
   makeRect,
   mirrorRect,
   pasteClip,
@@ -386,11 +389,21 @@ export const useEditor = create<EditorState>((set, get) => ({
     const normalized = shiftPlacements(
       state.layout.placements.map((placement, i) => (i === index ? next : placement)),
     )
+    const nextLayout = { placements: normalized.placements, gapMm: state.layout.gapMm }
+    let nextGeometry: BoardGeometry
+    try {
+      nextGeometry = deriveLayoutGeometry(nextLayout)
+    } catch (error) {
+      return error instanceof Error ? error.message : '板阵不合法'
+    }
+    const lost = lostCellsAfterShift(state.grid, nextGeometry, normalized.col, normalized.row)
+    if (lost > 0) {
+      const message = t('picker').moveConfirm(lost)
+      if (typeof window === 'undefined') return message
+      if (!window.confirm(message)) return null
+    }
     const failure = get().applyLayout(
-      {
-        placements: normalized.placements,
-        gapMm: state.layout.gapMm,
-      },
+      nextLayout,
       true,
       normalized,
     )
@@ -857,6 +870,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   mirror(axis) {
     const { selection, grid } = get()
     const rect = selectionRect(selection, grid)
+    const lost = countMirrorLoss(grid, rect, axis)
+    if (lost > 0 && !confirmBeadLoss(lost)) return
     recording = new PatchRecorder(grid, axis === 'h' ? '左右镜像' : '上下镜像')
     mirrorRect(recording, grid, rect, axis)
     commitRecording(set, get, null)
@@ -865,6 +880,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   rotate(dir) {
     const { selection, grid } = get()
     const rect = selectionRect(selection, grid)
+    const lost = countRotateLoss(grid, rect, dir)
+    if (lost > 0 && !confirmBeadLoss(lost)) return
     recording = new PatchRecorder(grid, '旋转')
     if (!rotateRect(recording, grid, rect, dir)) {
       recording = null
@@ -876,6 +893,8 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   translate(dc, dr) {
     const { grid } = get()
+    const lost = countTranslateLoss(grid, dc, dr)
+    if (lost > 0 && !confirmBeadLoss(lost)) return
     recording = new PatchRecorder(grid, '平移')
     translateGrid(recording, grid, dc, dr)
     commitRecording(set, get, null)
@@ -986,7 +1005,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       const mask = current.grid.placeable
       if (mask) for (let i = 0; i < result.cells.length; i++) if (!mask[i]) result.cells[i] = EMPTY
 
-      // 转换是一次大改动：能装进撤销栈就装，装不下就清空历史并说明
+      // 转换能记入撤销栈就保留；只有一次改动超限才必须清空历史。
       const grid = current.grid
       const previous = grid.cells
       const recorder = new PatchRecorder(grid, '转换')
@@ -998,7 +1017,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       }
       const patch = recorder.patch()
       if (patch) history.push(patch)
-      else history.clear()
+      else if (recorder.overflowed) history.clear()
 
       set({
         version: current.version + 1,
@@ -1051,16 +1070,28 @@ function commitRecording(
   const rec = recording
   recording = null
   if (!rec) return
+  const cellPatch = rec.patch()
+  const changed = rec.overflowed || cellPatch !== null || meta !== undefined
+  if (!changed) {
+    // No-op gestures should not cancel conversion or create a fake commit/history entry.
+    set({ pending: null, version: get().version + 1 })
+    return
+  }
   invalidateConversion()
   // 换色板/排除色号可能一格都没改（空画布、或者色号没用过），
   // 但元数据变了 —— 这时也得记一条，否则用户根本撤销不了这次操作。
-  const patch = rec.patch() ?? (meta ? emptyPatch(rec.label) : null)
-  if (patch) {
-    if (meta) {
-      patch.metaBefore = meta.before
-      patch.metaAfter = meta.after
+  if (rec.overflowed) {
+    // An unrecorded large mutation breaks the undo sequence; old entries must not cross it.
+    history.clear()
+  } else {
+    const patch = cellPatch ?? (meta ? emptyPatch(rec.label) : null)
+    if (patch) {
+      if (meta) {
+        patch.metaBefore = meta.before
+        patch.metaAfter = meta.after
+      }
+      history.push(patch)
     }
-    history.push(patch)
   }
   set({
     pending: null,
@@ -1118,6 +1149,15 @@ function emptyPatch(label: string): CellPatch {
     before: new Uint16Array(0),
     after: new Uint16Array(0),
   }
+}
+
+function confirmBeadLoss(count: number): boolean {
+  const message = t('editor').transformDiscard(count)
+  if (typeof window === 'undefined') {
+    useEditor.setState({ notice: message, noticeKind: 'error' })
+    return false
+  }
+  return window.confirm(message)
 }
 
 function selectionRect(sel: Selection, grid: CellGrid): Rect {

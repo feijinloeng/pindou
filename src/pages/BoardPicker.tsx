@@ -69,7 +69,7 @@ export default function BoardPicker() {
 
         <section className="mt-4 border-t border-line pt-3">
           <h3 className="mb-2 text-xs font-medium text-ink-2">
-            {placements.length ? `已放置 ${placements.length} 块` : copy.emptyHint}
+            {placements.length ? copy.placed(placements.length) : copy.emptyHint}
           </h3>
           {placements.length > 0 && (
             <div className="flex flex-col gap-1.5">

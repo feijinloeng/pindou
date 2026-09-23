@@ -10,6 +10,7 @@ import { zlibSync } from 'fflate'
 import { PALETTES } from '../../src/data/palettes.ts'
 import { DEFAULT_SETTINGS } from '../../src/conversion/settings.ts'
 import { downscalePositioned } from '../../src/conversion/downscale.ts'
+import { parseImageDimensions } from '../../src/conversion/imageDimensions.ts'
 
 import {
   boardGuide,
@@ -19,6 +20,14 @@ import {
   validateLayout,
 } from '../../src/domain/board.ts'
 import { EMPTY, lostCells } from '../../src/domain/grid.ts'
+import { lostCellsAfterShift } from '../../src/domain/grid.ts'
+import { History } from '../../src/editor/history.ts'
+import {
+  copySelection,
+  countMirrorLoss,
+  countRotateLoss,
+  countTranslateLoss,
+} from '../../src/editor/selection.ts'
 import { PT_PER_MM } from '../../src/domain/geometry.ts'
 import { paletteDisplayLabel } from '../../src/domain/palette.ts'
 import {
@@ -74,6 +83,80 @@ function fill(g: ReturnType<typeof grid>, index: number, value = 0) {
   const g = grid(2, 2, new Uint8Array([1, 0, 1, 1]))
   fill(g, 1) // 在空档里，本来就不算作品
   assert.equal(lostCells(g, { cols: 2, rows: 2, placeable: new Uint8Array(4) }), 0)
+}
+
+// 4a. Moving a normalized board layout evaluates bead retention at the shifted coordinates.
+{
+  const g = grid(2, 1)
+  g.cells[0] = 0
+  const next = { cols: 2, rows: 1, placeable: new Uint8Array([1, 1]) }
+  assert.equal(lostCellsAfterShift(g, next, 1, 0), 0)
+  assert.equal(lostCellsAfterShift(g, next, -1, 0), 1)
+}
+
+// 4b. Copying disjoint selections preserves blank space without rescanning every selection per cell.
+{
+  const g = grid(5, 1)
+  g.cells.set([10, 11, 12, 13, 14])
+  const clip = copySelection(g, [
+    { c0: 0, r0: 0, c1: 0, r1: 0 },
+    { c0: 4, r0: 0, c1: 4, r1: 0 },
+  ])
+  assert.ok(clip)
+  assert.deepEqual(Array.from(clip.cells), [10, EMPTY, EMPTY, EMPTY, 14])
+}
+
+// 4c. Irregular layouts warn before a transform moves occupied cells into board gaps.
+{
+  const g = grid(2, 2, new Uint8Array([1, 0, 1, 1]))
+  g.cells[0] = 3
+  const square = { c0: 0, r0: 0, c1: 1, r1: 1 }
+  assert.equal(countMirrorLoss(g, square, 'h'), 1)
+  assert.equal(countRotateLoss(g, square, 1), 1)
+  assert.equal(countTranslateLoss(g, 1, 0), 1)
+}
+
+// 4d. Read common raster dimensions without decoding the full image.
+{
+  const png = new Uint8Array(24)
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  new DataView(png.buffer).setUint32(16, 640, false)
+  new DataView(png.buffer).setUint32(20, 480, false)
+  assert.deepEqual(parseImageDimensions(png), { width: 640, height: 480 })
+
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 7, 8, 0, 2, 0, 3])
+  assert.deepEqual(parseImageDimensions(jpeg), { width: 3, height: 2 })
+  const exif = new Uint8Array([
+    0x45, 0x78, 0x69, 0x66, 0, 0, 0x49, 0x49, 42, 0, 8, 0, 0, 0,
+    1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+  ])
+  const rotatedJpeg = new Uint8Array([
+    0xff, 0xd8, 0xff, 0xe1, 0, exif.length + 2, ...exif,
+    0xff, 0xc0, 0, 7, 8, 0, 2, 0, 3, 0xff, 0xda,
+  ])
+  assert.deepEqual(parseImageDimensions(rotatedJpeg), { width: 2, height: 3 })
+  assert.deepEqual(
+    parseImageDimensions(new TextEncoder().encode('<svg viewBox="0 0 320 240"></svg>'), 'image/svg+xml'),
+    { width: 320, height: 240 },
+  )
+}
+
+// 4e. The history byte budget drops the oldest entries while retaining the newest undo steps.
+{
+  const history = new History(50, 40)
+  const patch = (index: number) => ({
+    label: 'test',
+    indexes: new Uint32Array([index]),
+    before: new Uint16Array([EMPTY]),
+    after: new Uint16Array([0]),
+  })
+  for (let index = 0; index < 6; index++) history.push(patch(index))
+  assert.equal(history.bytes, 40)
+  assert.equal(history.canUndo, true)
+  history.undo(grid(10, 1))
+  history.push(patch(7))
+  assert.equal(history.bytes, 40)
+  assert.equal(history.canRedo, false)
 }
 
 // 5-8. Physical mini-board guide geometry: safe margin, 10×10 frames, 5×5 dashed crosses, seam gap
@@ -318,6 +401,20 @@ assert.deepEqual(
   const shifted = downscalePositioned(red, 5, 5, 'contain', 0.5, 0.5, 0, 'mean')
   assert.deepEqual(Array.from(shifted.data.slice((2 * 5 + 4) * 3, (2 * 5 + 4) * 3 + 3)), [255, 0, 0])
   assert.deepEqual(Array.from(shifted.data.slice(0, 3)), [255, 255, 255])
+}
+
+// 22. Pixel-art downscaling preserves the most common source color instead of averaging it away.
+{
+  const checker = {
+    width: 2,
+    height: 2,
+    data: new Uint8ClampedArray([
+      0, 0, 0, 255, 255, 255, 255, 255,
+      255, 255, 255, 255, 0, 0, 0, 255,
+    ]),
+  }
+  const dominant = downscalePositioned(checker, 1, 1, 'contain', 1, 0, 0, 'dominant')
+  assert.deepEqual(Array.from(dominant.data), [0, 0, 0])
 }
 
 // Compact runtime data must keep every color index and RGB/Lab value identical to the source.

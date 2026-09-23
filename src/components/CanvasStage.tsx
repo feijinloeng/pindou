@@ -22,6 +22,7 @@ import {
 import { BOARD_BG, BOARD_GUIDE_COLOR } from '../render/colors'
 import { drawCursorBox, drawPattern, fillCellRect } from '../render/drawPattern'
 import { GridBitmap } from '../render/gridBitmap'
+import { t } from '../i18n/zh'
 import ToolDock from './ToolRail'
 
 type BoardDragState = {
@@ -389,6 +390,16 @@ export default function CanvasStage() {
     return true
   }
 
+  const addSelectedBoardAt = (cell: { col: number; row: number }): boolean => {
+    const state = useEditor.getState()
+    const pegs = BOARD_PROFILES[state.selectedBoard].pegs
+    return addBoardAt(
+      state.selectedBoard,
+      cell.col - Math.floor(pegs / 2),
+      cell.row - Math.floor(pegs / 2),
+    )
+  }
+
   const moveActiveBoard = (dc: number, dr: number): boolean => {
     const index = activeBoardRef.current
     if (index === null) return false
@@ -479,7 +490,7 @@ export default function CanvasStage() {
         } ${panel === 'library' ? 'invisible' : ''}`}
         tabIndex={0}
         role="application"
-        aria-label="豆格画布：方向键移动光标，Enter 应用当前工具"
+        aria-label={t('canvas').ariaLabel}
         aria-describedby="canvas-help"
         onKeyDown={(e) => {
           if (!shouldHandleCanvasKey(e)) return
@@ -496,13 +507,20 @@ export default function CanvasStage() {
               if (failure) state.setNotice(failure, 'error')
               activeBoardRef.current = null
             } else if (e.key === 'Enter') {
-              // Enter is reserved for canvas tools; it must not paint behind the board panel.
+              const at = kbCell ?? screenToCell(state.vp, size.width / 2, size.height / 2)
+              addSelectedBoardAt(at)
               e.preventDefault()
               return
             } else {
               // Leave letters and other shortcuts available to the editor shell.
               return
             }
+            e.preventDefault()
+            return
+          }
+          if (state.panel === 'boards' && e.key === 'Enter') {
+            const at = kbCell ?? screenToCell(state.vp, size.width / 2, size.height / 2)
+            addSelectedBoardAt(at)
             e.preventDefault()
             return
           }
@@ -566,12 +584,7 @@ export default function CanvasStage() {
               drawOverlay()
               return
             }
-            if (state.tool === 'pan') {
-              panRef.current = { x: e.clientX, y: e.clientY }
-              setPanning(true)
-              return
-            }
-            // 画布空白处不再直接添加板块，新增板块统一从左侧型号卡拖入。
+            addSelectedBoardAt(cell)
             return
           }
           if (state.tool === 'pan' && e.button === 0) {
@@ -653,13 +666,12 @@ export default function CanvasStage() {
       />
       {stage !== 'export' && <ToolDock />}
       <p id="canvas-help" className="sr-only">
-        方向键移动光标，按住 Shift 加方向键一次跳 5 格，Enter 把当前工具用在光标那一格上。
-        Cmd 或 Ctrl 加 Z 撤销，B/E/I/G/M/H 切换工具。打开画板面板后，从左侧型号卡拖一块板到画布；拖动或用方向键调整选中的板块，Delete 或 Backspace 删除板块。
+        {t('canvas').keyboardHelp}
       </p>
       <div className="sr-only" role="status" aria-live="polite">
         {kbCell
-          ? `第 ${kbCell.row + 1} 行 第 ${kbCell.col + 1} 列，${kbCode ? `色号 ${kbCode}` : '空格'}`
-          : '画布未聚焦'}
+          ? t('canvas').cellStatus(kbCell.row, kbCell.col, kbCode)
+          : t('canvas').notFocused}
       </div>
     </div>
   )

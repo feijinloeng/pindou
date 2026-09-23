@@ -13,7 +13,6 @@ import type { PaletteLabEntry, Rgb } from './colorDistance'
 import {
   cropRect,
   downscale,
-  downscaleContained,
   downscalePositioned,
   fitToAspect,
   type FitMode,
@@ -136,7 +135,7 @@ export function convert(input: ConvertInput): ConvertResult {
         strategy.downscale,
       )
     : settings.fit === 'contain'
-      ? downscaleContained(image, cols, rows)
+      ? downscalePositioned(image, cols, rows, 'contain', 1, 0, 0, strategy.downscale)
       : downscale(fitToAspect(image, cols, rows, settings.fit), cols, rows, strategy.downscale)
 
   report('预处理', 0.4)

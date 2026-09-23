@@ -62,13 +62,26 @@ export function lostCells(
   g: CellGrid,
   next: { cols: number; rows: number; placeable: Uint8Array },
 ): number {
+  return lostCellsAfterShift(g, next, 0, 0)
+}
+
+/** Count occupied cells that would be lost after moving their coordinates before a layout change. */
+export function lostCellsAfterShift(
+  g: CellGrid,
+  next: { cols: number; rows: number; placeable: Uint8Array },
+  colShift: number,
+  rowShift: number,
+): number {
   let lost = 0
   for (let i = 0; i < g.cells.length; i++) {
     if (g.cells[i] === EMPTY) continue
     if (g.placeable && g.placeable[i] !== 1) continue
-    const col = i % g.cols
-    const row = (i - col) / g.cols
-    if (col >= next.cols || row >= next.rows || next.placeable[row * next.cols + col] !== 1) lost++
+    const col = (i % g.cols) + colShift
+    const row = Math.floor(i / g.cols) + rowShift
+    if (
+      col < 0 || row < 0 || col >= next.cols || row >= next.rows ||
+      next.placeable[row * next.cols + col] !== 1
+    ) lost++
   }
   return lost
 }

@@ -29,6 +29,8 @@ export interface CellPatch {
 const HISTORY_DEPTH = 50
 /** 单次操作上限：超过就不计入撤销历史，只留改动（第 13.4 节） */
 const MAX_PATCH_CELLS = 2_000_000
+/** Keep undo and redo data under 64 MiB even when every step changes many cells. */
+export const MAX_HISTORY_BYTES = 64 * 1024 * 1024
 
 const INITIAL_CAPACITY = 1024
 
@@ -123,16 +125,25 @@ function applyPatch(grid: CellGrid, patch: CellPatch, direction: 'undo' | 'redo'
 export class History {
   private undoStack: CellPatch[] = []
   private redoStack: CellPatch[] = []
+  private storedBytes = 0
   readonly depth: number
+  readonly maxBytes: number
 
-  constructor(depth = HISTORY_DEPTH) {
+  constructor(depth = HISTORY_DEPTH, maxBytes = MAX_HISTORY_BYTES) {
     this.depth = depth
+    this.maxBytes = maxBytes
   }
 
   push(patch: CellPatch): void {
-    this.undoStack.push(patch)
-    if (this.undoStack.length > this.depth) this.undoStack.shift()
+    for (const item of this.redoStack) this.storedBytes -= patchBytes(item)
     this.redoStack.length = 0
+    this.undoStack.push(patch)
+    this.storedBytes += patchBytes(patch)
+    while (this.undoStack.length > this.depth || this.storedBytes > this.maxBytes) {
+      const oldest = this.undoStack.shift()
+      if (!oldest) break
+      this.storedBytes -= patchBytes(oldest)
+    }
   }
 
   undo(grid: CellGrid): CellPatch | null {
@@ -162,5 +173,14 @@ export class History {
   clear(): void {
     this.undoStack.length = 0
     this.redoStack.length = 0
+    this.storedBytes = 0
   }
+
+  get bytes(): number {
+    return this.storedBytes
+  }
+}
+
+function patchBytes(patch: CellPatch): number {
+  return patch.indexes.byteLength + patch.before.byteLength + patch.after.byteLength
 }
