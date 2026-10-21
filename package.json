@@ -2,6 +2,19 @@
   "name": "pindou",
   "private": true,
   "version": "0.1.0",
+  "description": "Browser-only Chinese fuse-bead pattern editor: draw on pegboards, convert images to palette-limited patterns, and export locally.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/feijinloeng/pindou.git"
+  },
+  "homepage": "https://pindou.liangfeiyan.cn",
+  "bugs": {
+    "url": "https://github.com/feijinloeng/pindou/issues"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +23,7 @@
     "lint": "oxlint --deny-warnings",
     "typecheck": "tsc -b --noEmit",
     "build:palettes": "node scripts/data/build-palettes.ts",
-    "check": "node scripts/check/grid-loss.ts",
+    "check": "node scripts/check/run.ts",
     "check:browser": "node scripts/check/browser.ts"
   },
   "dependencies": {

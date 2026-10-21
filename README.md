@@ -1,6 +1,8 @@
-# Pindou
+# Pindou · 拼豆豆
 
-Pindou is a browser-only Chinese fuse-bead / pegboard pattern editor.
+[![CI](https://github.com/feijinloeng/pindou/actions/workflows/ci.yml/badge.svg)](https://github.com/feijinloeng/pindou/actions/workflows/ci.yml)
+
+Pindou (拼豆豆) is a browser-only Chinese fuse-bead / pegboard pattern editor. There is a hosted copy at <https://pindou.liangfeiyan.cn>.
 
 ## What it does
 
@@ -12,6 +14,8 @@ Pindou is a browser-only Chinese fuse-bead / pegboard pattern editor.
 There is no backend, account, login, payment, cloud sync, or upload service. Projects and cached source images stay in the browser's IndexedDB. Clearing browser data or changing devices does not move projects; exported files are external copies and cannot currently be restored through the app.
 
 ## Run locally
+
+Requires Node.js >= 22.18 and npm. A current Chrome, Edge, Firefox, or Safari with Canvas 2D and IndexedDB is enough to run it.
 
 ```bash
 npm install
@@ -48,6 +52,14 @@ npm run build
 - `src/render/fonts/` includes a font subset under the SIL Open Font License; see `src/render/fonts/OFL.txt`.
 
 Palette values are community screen-reference data, not manufacturer-certified color measurements. For production matching, use physical brand swatches or a calibrated custom palette.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: stay browser-only, keep user-facing text in `src/i18n/zh.ts`, and run `npm run typecheck && npm run lint && npm run check && npm run build` before opening a pull request.
+
+## Security
+
+Report vulnerabilities privately through [SECURITY.md](SECURITY.md); do not open a public issue.
 
 ## License
 
