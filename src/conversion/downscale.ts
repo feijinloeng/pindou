@@ -72,8 +72,6 @@ function downscaleDominant(
       const x0 = Math.floor((ox * src.width) / outW)
       const x1 = Math.max(x0 + 1, Math.floor(((ox + 1) * src.width) / outW))
       touched.length = 0
-      let bestKey = -1
-      let bestCount = 0
       for (let y = y0; y < y1 && y < src.height; y++) {
         for (let x = x0; x < x1 && x < src.width; x++) {
           const i = (y * src.width + x) * 4
@@ -86,10 +84,15 @@ function downscaleDominant(
           sums[key * 3] += r
           sums[key * 3 + 1] += g
           sums[key * 3 + 2] += b
-          if (counts[key] > bestCount) {
-            bestCount = counts[key]
-            bestKey = key
-          }
+        }
+      }
+      let bestKey = -1
+      let bestCount = 0
+      // 平票时保留先出现的颜色，否则结果取决于扫描顺序。
+      for (const key of touched) {
+        if (counts[key] > bestCount) {
+          bestCount = counts[key]
+          bestKey = key
         }
       }
       const o = (oy * outW + ox) * 3
@@ -170,8 +173,6 @@ export function downscalePositioned(
       let g = 0
       let b = 0
       let n = 0
-      let bestKey = -1
-      let bestCount = 0
       if (touched) touched.length = 0
       for (let y = sy0; y < sy1; y++) {
         for (let x = sx0; x < sx1; x++) {
@@ -186,10 +187,6 @@ export function downscalePositioned(
             sums[key * 3] += pr
             sums[key * 3 + 1] += pg
             sums[key * 3 + 2] += pb
-            if (counts[key] > bestCount) {
-              bestCount = counts[key]
-              bestKey = key
-            }
           } else {
             r += srgbToLinear(pr)
             g += srgbToLinear(pg)
@@ -199,6 +196,17 @@ export function downscalePositioned(
         }
       }
       const o = (oy * width + ox) * 3
+      let bestKey = -1
+      let bestCount = 0
+      // 平票时保留先出现的颜色，否则结果取决于扫描顺序。
+      if (touched && counts) {
+        for (const key of touched) {
+          if (counts[key] > bestCount) {
+            bestCount = counts[key]
+            bestKey = key
+          }
+        }
+      }
       if (dominant && sums && bestKey >= 0) {
         out[o] = Math.round(sums[bestKey * 3] / bestCount)
         out[o + 1] = Math.round(sums[bestKey * 3 + 1] / bestCount)
